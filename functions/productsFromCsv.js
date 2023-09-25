@@ -42,7 +42,7 @@ async function convertCSVToMongo(ws) {
     const csv = require('csvtojson');
     const jsonArray = await csv().fromFile(csvFilePath);
 
-    console.log(jsonArray)
+    // console.log(jsonArray)
 
     // Insert JSON array into MongoDB
     await collection.insertMany(jsonArray);
