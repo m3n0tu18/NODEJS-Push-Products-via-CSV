@@ -7,7 +7,7 @@ const app = express()
 app.set('view engine', 'ejs')
 const initializeMiddlewares = require('./config/middlewares')
 const apiRoutes = require('./routes/apiRoutes')
-require('./config/websocket')
+const { getWebSocket } = require('./config/websocket')
 
 
 initializeMiddlewares(app)
@@ -18,7 +18,8 @@ app.use(express.static('public'))
 
 
 app.get('/', (req, res) => {
-    res.render('index')
+    const wsPort = process.env.WS_PORT
+    res.render('index', { wsPort: wsPort })
 })
 
 

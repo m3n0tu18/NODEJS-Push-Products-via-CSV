@@ -27,4 +27,14 @@ const { getWebSocket } = require('../config/websocket')
 //     }
 // })
 
+router.post('/api/products/push-from-csv', async (req, res) => {
+    const ws = getWebSocket()
+    if (ws) {
+        await pushFromCsv(ws)
+        res.status(200).json({ message: 'Products pushed successfully' })
+    } else {
+        res.status(500).json({ message: 'No websocket connection' })
+    }
+})
+
 module.exports = router;

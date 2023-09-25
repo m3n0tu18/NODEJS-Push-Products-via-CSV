@@ -91,8 +91,8 @@
     const importButton = document.getElementById("push-from-csv");
     let timerInterval; // Declare the timer interval outside so we can clear it later
 
-    const ws = new WebSocket("ws://localhost:8080");
-
+    // const ws = {  };
+    const ws = new WebSocket(`ws://localhost:<%= wsPort %>`);
     ws.addEventListener("message", (event) => {
       logBox.innerHTML += `<br/><small>${event.data}</small>`;
       logBox.scrollTop = logBox.scrollHeight;
@@ -110,7 +110,7 @@
       try {
         importButton.disabled = true;
 
-        response = await fetch("/api/posts/pull-to-csv", {
+        response = await fetch("/api/products/push-from-csv", {
           method: "POST",
         });
         const data = await response.json();
