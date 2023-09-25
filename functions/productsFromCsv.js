@@ -4,7 +4,7 @@ const dbCollection = process.env.COLLECTION;
 const database = process.env.DATABASE;
 const uri = `${process.env.MONGO_URL}/${database}`;
 const delayTimeout = process.env.DELAY_TIMEOUT;
-const destinationURL = process.env.DESTINATION_URL;
+const destinationURL = process.env.WP_DESTINATION_URL;
 const mongoose = require('mongoose');
 const axios = require("axios");
 const Buffer = require('buffer').Buffer;
@@ -179,11 +179,7 @@ async function convertCSVToMongo(ws) {
     const csvFilePath = './csv_data/tubular-data.csv';
 
     try {
-        // Connect to MongoDB
-        // await client.connect();
-        // const collection = client.db(database).collection(dbCollection);
         await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
-
 
         // Read CSV file
         const jsonArray = await csv().fromFile(csvFilePath);
@@ -192,7 +188,6 @@ async function convertCSVToMongo(ws) {
         let matchedButNotModifiedCount = 0;
 
         for (let item of jsonArray) {
-
 
             // Enhance the item with 'variation: true' for specific fields
             ["Body Colour", "Baffle Colour", "Wattage", "Colour Temperature", "Beam Angle", "Dimming", "Accessories"].forEach(field => {
@@ -210,8 +205,6 @@ async function convertCSVToMongo(ws) {
                 item,
                 { upsert: true, new: true, setDefaultsOnInsert: true }  // This will insert the item if it doesn't exist
             );
-
-            // console.log(result)
 
             // Tally up the counts and updated SKUs
             if (result.modifiedCount === 1) {
@@ -248,13 +241,62 @@ async function convertCSVToMongo(ws) {
 
 
 // Get data from Database
-async function getDataFromDatabase(ws, filter) {
+async function getDataFromDatabase(ws) {
+    let results = []
+    try {
+        await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
 
+        // Fetching data from MongoDB
+        results = await Product.find({});
+
+        // If web socket exists, send the data
+        if (ws) {
+            sendMessage(ws, `Fetched ${results.length} products from the database.`);
+        }
+
+        // Close the Mongoose connection
+        await mongoose.connection.close();
+    } catch (err) {
+        console.log(err);
+        if (ws) {
+            sendMessage(ws, `Error: ${err}`);
+        }
+    }
+    return results;
 }
 
 // Function to check WooCommerce for existing products
 async function checkIfProductExists(ws, sku, token, destinationURL) {
+    try {
+        const headers = {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        };
 
+        // Making a GET request to WooCommerce to find the product by SKU
+        const response = await axios.get(`${destinationURL}/wp-json/wc/v3/products`, {
+            headers: headers,
+            params: { sku: sku }
+        });
+
+        if (response.data && response.data.length > 0) {
+            if (ws) {
+                sendMessage(ws, `Product with SKU ${sku} already exists in WooCommerce.`);
+            }
+            return true;
+        } else {
+            if (ws) {
+                sendMessage(ws, `Product with SKU ${sku} does not exist in WooCommerce.`);
+            }
+            return false;
+        }
+    } catch (err) {
+        console.log(err);
+        if (ws) {
+            sendMessage(ws, `Error while checking WooCommerce for SKU ${sku}: ${err}`);
+        }
+        return false;
+    }
 }
 
 
@@ -269,7 +311,12 @@ async function processBuilder(ws) {
         await sleep(delayTimeout);
         sendMessage(ws, "Fetching products from CSV...")
         await sleep(delayTimeout);
-        await convertCSVToMongo(ws);
+        // await convertCSVToMongo(ws); // WORKS
+
+        const filter = { "SKU": "TUB-1-1-1" }
+        const getData = await getDataFromDatabase(ws, filter)
+        // console.log(getData)
+        sendMessage(ws, getData)
     } catch (err) {
         console.log('Error:', err);
     }
