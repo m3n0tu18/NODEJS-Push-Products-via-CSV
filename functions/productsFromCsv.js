@@ -16,9 +16,6 @@ const { send } = require('express/lib/response');
 const xml2js = require('xml2js');
 const path = require('path');
 const fs = require('fs')
-const createCsvWriter = require("csv-writer").createObjectCsvWriter;
-
-const enableCSVExport = process.env.ENABLE_CSV_EXPORT;
 
 function sendMessage(ws, message) {
     if (ws && ws.readyState === ws.OPEN) {
@@ -28,6 +25,33 @@ function sendMessage(ws, message) {
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+
+async function convertCSVToMongo(ws) {
+
+    const csvFilePath = './csv_data/tubular-data.csv';
+
+    // console.log(csvFilePath);
+
+    // Connect to MongoDB
+    await client.connect();
+    const collection = client.db(database).collection(dbCollection); // Replace with your database and collection names
+
+    // Read CSV file
+    const csv = require('csvtojson');
+    const jsonArray = await csv().fromFile(csvFilePath);
+
+    console.log(jsonArray)
+
+    // Insert JSON array into MongoDB
+    await collection.insertMany(jsonArray);
+
+    // Close the connection
+    await client.close();
+
+    sendMessage(ws, `Converted CSV file to MongoDB collection: ${dbCollection}`);
+
 }
 
 
@@ -705,6 +729,32 @@ function sleep(ms) {
 // }
 
 
+async function processBuilder(ws) {
+    const startTime = Date.now();
+    ws.send("startTimer");
+
+    try {
+        sendMessage(ws, "Fetching products from CSV...")
+        const allProducts = await convertCSVToMongo(ws);
+
+        console.log(allProducts);
+    } catch (err) {
+        console.log('Error:', err);
+    }
+
+    const endTime = Date.now();
+    const elapsedTime = (endTime - startTime);
+
+    const hours = Math.floor(elapsedTime / 3600000);
+    const minutes = Math.floor((elapsedTime - (hours * 3600000)) / 60000);
+    const seconds = Math.floor((elapsedTime - (hours * 3600000) - (minutes * 60000)) / 1000);
+
+    sendMessage(ws, `Elapsed time: ${hours} hours, ${minutes} minutes, ${seconds} seconds`);
+
+    // Stop the timer on client side
+    ws.send("stopTimer");
+}
+
 // async function fetchThePosts(ws, url, maxPosts = process.env.MAX_POSTS) {
 //     const startTime = Date.now();
 //     console.log('fetch posts function: ' + url)
@@ -765,4 +815,4 @@ function sleep(ms) {
 //     ws.send("stopTimer");
 // }
 
-module.exports = { fetchThePosts };
+module.exports = { processBuilder };
