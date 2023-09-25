@@ -1,17 +1,11 @@
 require("dotenv").config();
-const MongoClient = require('mongodb').MongoClient;
+// const MongoClient = require('mongodb').MongoClient;
 const dbCollection = process.env.COLLECTION;
 const database = process.env.DATABASE;
 const uri = `${process.env.MONGO_URL}/${database}`;
-
-
-const delayNumber = process.env.DELAY_TIMEOUT;
+const delayTimeout = process.env.DELAY_TIMEOUT;
 const destinationURL = process.env.DESTINATION_URL;
 const mongoose = require('mongoose');
-
-// const client = new MongoClient(uri, { useUnifiedTopology: true });
-// const client = new MongoClient(uri, { poolSize: 1, useUnifiedTopology: true });
-
 const axios = require("axios");
 const Buffer = require('buffer').Buffer;
 const { send } = require('express/lib/response');
@@ -21,10 +15,12 @@ const fs = require('fs')
 const csv = require('csvtojson');  // Move this to the top of your file for better performance
 
 
+// data cleaner upper (used in schema)
 function splitAndTrim(value) {
     return typeof value === 'string' ? value.split('|').map(item => item.trim()) : value;
 }
 
+// Mongo DB Schema
 const productSchema = new mongoose.Schema({
     "SKU": String,
     "Parent SKU": String,
@@ -162,63 +158,23 @@ const productSchema = new mongoose.Schema({
     // },
 })
 
+// Mongo DB Model
 const Product = mongoose.model('Product', productSchema, 'csvProductData');
 
-
+// Websocket Sender function
 function sendMessage(ws, message) {
     if (ws && ws.readyState === ws.OPEN) {
         ws.send(message);
     }
 }
 
+// Sleeper function
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 
-// async function convertCSVToMongo(ws) {
-//     const csvFilePath = './csv_data/tubular-data.csv';
-
-//     try {
-
-//         await client.connect();
-//         const collection = client.db(database).collection(dbCollection); // Replace with your database and collection names
-
-//         // Read CSV file
-//         const csv = require('csvtojson');
-//         const jsonArray = await csv().fromFile(csvFilePath);
-//         let updatedSKUs = [];  // Store SKUs that have been updated
-//         let updatedCount = 0;  // Count of SKUs that have been updated
-//         let createdCount = 0;  // Count of SKUs that have been created
-
-
-//         for (let item of jsonArray) {
-//             // Use 'SKU' as the unique identifier for your items
-//             const result = await collection.updateOne(
-//                 { SKU: item.SKU },
-//                 { $set: item },
-//                 { upsert: true }  // This will insert the item if it doesn't exist
-//             );
-//             // If modifiedCount is 1, it means the SKU was updated
-//             if (result.modifiedCount === 1) {
-//                 updatedSKUs.push(item.SKU);
-//             }
-//         }
-
-//         if (updatedSKUs.length) {
-//             sendMessage(ws, `Updated SKUs: ${updatedSKUs.join('| ')}`);
-//         } else {
-//             sendMessage(ws, `No change required.`);
-//         }
-
-//         sendMessage(ws, `<strong>${updatedSKUs.length} row(s)</strong> have been updated into the database table: <strong>${dbCollection}</strong>`);
-
-//         await client.close()
-//     } catch (err) {
-//         console.log(err)
-//         sendMessage(ws, `Error: ${err}`)
-//     }
-// }
+// Function to convert CSV to MongoDB
 async function convertCSVToMongo(ws) {
     const csvFilePath = './csv_data/tubular-data.csv';
 
@@ -233,8 +189,21 @@ async function convertCSVToMongo(ws) {
         const jsonArray = await csv().fromFile(csvFilePath);
         let updatedSKUs = [];  // Store SKUs that have been updated
         let createdCount = 0;  // Count of SKUs that have been created
+        let matchedButNotModifiedCount = 0;
 
         for (let item of jsonArray) {
+
+
+            // Enhance the item with 'variation: true' for specific fields
+            ["Body Colour", "Baffle Colour", "Wattage", "Colour Temperature", "Beam Angle", "Dimming", "Accessories"].forEach(field => {
+                if (item[field]) {
+                    item[field] = {
+                        variation: true,
+                        values: splitAndTrim(item[field])
+                    };
+                }
+            });
+
             // Use 'SKU' as the unique identifier for your items
             const result = await Product.updateOne(
                 { SKU: item.SKU },
@@ -242,24 +211,31 @@ async function convertCSVToMongo(ws) {
                 { upsert: true, new: true, setDefaultsOnInsert: true }  // This will insert the item if it doesn't exist
             );
 
+            // console.log(result)
+
             // Tally up the counts and updated SKUs
-            if (result.nModified === 1) {
+            if (result.modifiedCount === 1) {
                 updatedSKUs.push(item.SKU);
-            } else if (result.upserted) {
+            } else if (result.upsertedCount === 1) {
                 createdCount++;
+            } else if (result.matchedCount === 1 && result.modifiedCount === 0) {
+                matchedButNotModifiedCount++;
             }
         }
 
         // Construct the message based on the counts
         if (createdCount > 0) {
-            sendMessage(ws, `<strong>${createdCount} row(s)</strong> have been added to the database table: <strong>${dbCollection}</strong>`);
+            sendMessage(ws, `- <strong>${createdCount} row(s)</strong> have been added to the database table: <strong>${dbCollection}</strong>`);
         }
         if (updatedSKUs.length > 0) {
-            sendMessage(ws, `Updated SKUs: ${updatedSKUs.join('| ')}`);
-            sendMessage(ws, `<strong>${updatedSKUs.length} row(s)</strong> have been updated in the database table: <strong>${dbCollection}</strong>`);
+            sendMessage(ws, `Updated SKUs: <strong>${updatedSKUs.join('| ')}</strong>`);
+            sendMessage(ws, `- <strong>${updatedSKUs.length} row(s)</strong> have been updated in the database table: <strong>${dbCollection}</strong>`);
         }
         if (createdCount === 0 && updatedSKUs.length === 0) {
             sendMessage(ws, `No change required.`);
+        }
+        if (matchedButNotModifiedCount > 0) {
+            sendMessage(ws, `- <strong>${matchedButNotModifiedCount} row(s)</strong> were matched but not modified in the database table: <strong>${dbCollection}</strong>`);
         }
 
         // Close the Mongoose connection
@@ -271,14 +247,28 @@ async function convertCSVToMongo(ws) {
 }
 
 
+// Get data from Database
+async function getDataFromDatabase(ws, filter) {
+
+}
+
+// Function to check WooCommerce for existing products
+async function checkIfProductExists(ws, sku, token, destinationURL) {
+
+}
+
+
+
+
+// Run the Process
 async function processBuilder(ws) {
     const startTime = Date.now();
     ws.send("startTimer");
 
     try {
-        await sleep(1000);
+        await sleep(delayTimeout);
         sendMessage(ws, "Fetching products from CSV...")
-        await sleep(1000);
+        await sleep(delayTimeout);
         await convertCSVToMongo(ws);
     } catch (err) {
         console.log('Error:', err);
