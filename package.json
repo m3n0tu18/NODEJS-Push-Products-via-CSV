@@ -1,0 +1,32 @@
+{
+  "name": "nodejs-push-products-via-csv",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "devStart": "nodemon -r dotenv/config --inspect server.js dotenv_config_path=env/dev.env",
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^0.21.4",
+    "cors": "^2.8.5",
+    "csv-writer": "^1.6.0",
+    "ejs": "^3.1.9",
+    "express": "^4.18.2",
+    "express-ejs-layouts": "^2.5.0",
+    "express-flash": "^0.0.2",
+    "express-session": "^1.17.2",
+    "method-override": "^3.0.0",
+    "mongodb": "^6.1.0",
+    "mongoose": "^7.5.2",
+    "ws": "^8.14.1",
+    "xml2js": "^0.6.2"
+  },
+  "devDependencies": {
+    "dotenv": "^8.6.0",
+    "nodemon": "^2.0.22"
+  }
+}

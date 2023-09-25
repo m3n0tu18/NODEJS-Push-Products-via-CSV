@@ -1,0 +1,147 @@
+<h1>Post from CSV Pusher</h1>
+
+<button class="button" id="push-from-csv">Push from CSV</button>
+
+<div id="message-box" class="success"></div>
+
+<div id="timer">Elapsed time: 00:00:00</div>
+
+<div
+  id="log-box"
+  style="
+    width: 100%;
+    height: 500px;
+    overflow-y: scroll;
+    border: 1px solid #ccc;
+    padding: 10px;
+  "
+></div>
+
+<script>
+  // document.addEventListener("DOMContentLoaded", function () {
+  //   const logBox = document.getElementById("log-box");
+  //   const importButton = document.getElementById("post-pull-to-csv");
+
+  //   const ws = new WebSocket("ws://localhost:8080");
+
+  //   ws.addEventListener("message", (event) => {
+  //     logBox.innerHTML += `<br/><small>${event.data}</small>`;
+  //     logBox.scrollTop = logBox.scrollHeight;
+  //   });
+
+  //   importButton.addEventListener("click", async () => {
+  //     logBox.innerHTML = "";
+  //     try {
+  //       importButton.disabled = true;
+
+  //       response = await fetch("/api/posts/pull-to-csv", {
+  //         method: "POST",
+  //       });
+  //       const data = await response.json();
+
+  //       logBox.innerHTML += `<br/><small>${data.message}</small>`;
+  //       logBox.scrollTop = logBox.scrollHeight;
+
+  //       importButton.disabled = false;
+  //     } catch (err) {
+  //       console.log(err);
+  //       logBox.innerHTML += `<br/><small>${err}</small>`;
+  //       logBox.scrollTop = logBox.scrollHeight;
+  //       importButton.disabled = false;
+  //     }
+  //   });
+  // });
+
+  // document.addEventListener("DOMContentLoaded", function () {
+  //   const logBox = document.getElementById("log-box");
+  //   const importButton = document.getElementById("make-csv");
+
+  //   const ws = new WebSocket("ws://localhost:8080");
+
+  //   ws.addEventListener("message", (event) => {
+  //     logBox.innerHTML += `<br/><small>${event.data}</small>`;
+  //     logBox.scrollTop = logBox.scrollHeight;
+  //   });
+
+  //   importButton.addEventListener("click", async () => {
+  //     logBox.innerHTML = "";
+  //     try {
+  //       importButton.disabled = true;
+
+  //       response = await fetch("/api/posts/make-csv", {
+  //         method: "POST",
+  //       });
+  //       const data = await response.json();
+
+  //       logBox.innerHTML += `<br/><small>${data.message}</small>`;
+  //       logBox.scrollTop = logBox.scrollHeight;
+
+  //       importButton.disabled = false;
+  //     } catch (err) {
+  //       console.log(err);
+  //       logBox.innerHTML += `<br/><small>${err}</small>`;
+  //       logBox.scrollTop = logBox.scrollHeight;
+  //       importButton.disabled = false;
+  //     }
+  //   });
+  // });
+
+  document.addEventListener("DOMContentLoaded", function () {
+    const logBox = document.getElementById("log-box");
+    const importButton = document.getElementById("push-from-csv");
+    let timerInterval; // Declare the timer interval outside so we can clear it later
+
+    const ws = new WebSocket("ws://localhost:8080");
+
+    ws.addEventListener("message", (event) => {
+      logBox.innerHTML += `<br/><small>${event.data}</small>`;
+      logBox.scrollTop = logBox.scrollHeight;
+
+      if (event.data === "startTimer") {
+        startTime = Date.now();
+        timerInterval = setInterval(updateTimer, 1000); // Start the timer only when "startTimer" message is received
+      } else if (event.data === "stopTimer") {
+        clearInterval(timerInterval); // Stop the timer when "stopTimer" message is received
+      }
+    });
+
+    importButton.addEventListener("click", async () => {
+      logBox.innerHTML = "";
+      try {
+        importButton.disabled = true;
+
+        response = await fetch("/api/posts/pull-to-csv", {
+          method: "POST",
+        });
+        const data = await response.json();
+
+        logBox.innerHTML += `<br/><small>${data.message}</small>`;
+        logBox.scrollTop = logBox.scrollHeight;
+
+        importButton.disabled = false;
+      } catch (err) {
+        console.log(err);
+        logBox.innerHTML += `<br/><small>${err}</small>`;
+        logBox.scrollTop = logBox.scrollHeight;
+        importButton.disabled = false;
+      }
+    });
+  });
+
+  let startTime;
+
+  function updateTimer() {
+    const now = Date.now();
+    const elapsedTime = now - startTime;
+
+    const hours = Math.floor(elapsedTime / 3600000);
+    const minutes = Math.floor((elapsedTime % 3600000) / 60000);
+    const seconds = Math.floor((elapsedTime % 60000) / 1000);
+
+    document.getElementById("timer").textContent = `Elapsed time: ${String(
+      hours
+    ).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(
+      seconds
+    ).padStart(2, "0")}`;
+  }
+</script>
