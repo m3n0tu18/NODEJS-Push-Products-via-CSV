@@ -1,14 +1,16 @@
 require("dotenv").config();
 const MongoClient = require('mongodb').MongoClient;
-const uri = process.env.MONGO_URL; // Replace with your MongoDB URI if different
 const dbCollection = process.env.COLLECTION;
 const database = process.env.DATABASE;
+const uri = `${process.env.MONGO_URL}/${database}`;
+
+
 const delayNumber = process.env.DELAY_TIMEOUT;
 const destinationURL = process.env.DESTINATION_URL;
+const mongoose = require('mongoose');
 
-const client = new MongoClient(uri, { useUnifiedTopology: true });
+// const client = new MongoClient(uri, { useUnifiedTopology: true });
 // const client = new MongoClient(uri, { poolSize: 1, useUnifiedTopology: true });
-
 
 const axios = require("axios");
 const Buffer = require('buffer').Buffer;
@@ -16,6 +18,152 @@ const { send } = require('express/lib/response');
 const xml2js = require('xml2js');
 const path = require('path');
 const fs = require('fs')
+const csv = require('csvtojson');  // Move this to the top of your file for better performance
+
+
+function splitAndTrim(value) {
+    return typeof value === 'string' ? value.split('|').map(item => item.trim()) : value;
+}
+
+const productSchema = new mongoose.Schema({
+    "SKU": String,
+    "Parent SKU": String,
+    "Product Title": String,
+    "Description": String,
+    "Trade Price": Number,
+    "Platinum Price (-50%)": Number,
+    "Variable|Simple": String,
+    "Category": {
+        type: Array,
+        get: values => values,
+        set: splitAndTrim
+    },
+    "Tags": {
+        type: Array,
+        get: tags => tags,
+        set: tags => typeof tags === 'string' ? tags.split('|').map(tag => tag.trim()) : tags
+    },
+
+    "Body Colour": {
+        // variation: { type: Boolean, default: true },
+        // values: {
+        type: Array,
+        get: values => values,
+        set: splitAndTrim,
+        // }
+    },
+    "Baffle Colour": {
+        // variation: { type: Boolean, default: true },
+        // values: {
+        type: Array,
+        get: values => values,
+        set: splitAndTrim
+        // }
+    },
+    "Socket Type": {
+        // variation: { type: Boolean, default: true },
+        // values: {
+        type: Array,
+        get: values => values,
+        set: splitAndTrim
+        // }
+
+    },
+    "Wattage": {
+        // variation: { type: Boolean, default: true },
+        // values: {
+        type: Array,
+        get: values => values,
+        set: splitAndTrim
+
+    },
+    "Colour Temperature": {
+        // variation: { type: Boolean, default: true },
+        // values: {
+        type: Array,
+        get: values => values,
+        set: splitAndTrim
+        // }
+    },
+    "Beam Angle": {
+        // variation: { type: Boolean, default: true },
+        // values: {
+        type: Array,
+        get: values => values,
+        set: splitAndTrim
+        // }
+    },
+    "Dimming": {
+        // variation: { type: Boolean, default: true },
+        // values: {
+        type: Array,
+        get: values => values,
+        set: splitAndTrim
+        // }
+    },
+    "Accessories": {
+        // variation: { type: Boolean, default: true },
+        // values: {
+        type: Array,
+        get: values => values,
+        set: splitAndTrim
+        // }
+    },
+    "mA": {
+        // variation: { type: Boolean, default: true },
+        // values: {
+        type: Array,
+        get: values => values,
+        set: splitAndTrim
+        // }
+    },
+    "Lumen Output": {
+        // variation: { type: Boolean, default: true },
+        // values: {
+        type: Array,
+        get: values => values,
+        set: splitAndTrim
+        // }
+    },
+    "Height": String,
+    "Width": String,
+    "Length": String,
+    "Cut-Out": String,
+    "IP Rating": String,
+    "Image URL": {
+        type: Array,
+        get: imageURL => imageURL,
+        set: imageURL => typeof imageURL === 'string' ? imageURL.split('|').map(tag => tag.trim()) : imageURL,
+    },
+    "Instruction Manual": {
+        type: Array,
+        get: instructionManual => instructionManual,
+        set: instructionManual => typeof instructionManual === 'string' ? instructionManual.split('|').map(tag => tag.trim()) : instructionManual,
+    },
+    "Photometry": {
+        type: Array,
+        get: photometry => photometry,
+        set: photometry => typeof photometry === 'string' ? photometry.split('|').map(tag => tag.trim()) : photometry,
+    },
+    "CAD Drawings": {
+        type: Array,
+        get: values => values,
+        set: values => typeof values === 'string' ? values.split('|').map(tag => tag.trim()) : values,
+    },
+    "Datasheet": {
+        type: Array,
+        get: datasheet => datasheet,
+        set: datasheet => typeof datasheet === 'string' ? datasheet.split('|').map(tag => tag.trim()) : datasheet,
+    },
+    // "Lumen Output": {
+    //     type: Array,
+    //     get: lumenOutput => lumenOutput,
+    //     set: lumenOutput => typeof lumenOutput === 'string' ? lumenOutput.split('|').map(tag => tag.trim()) : lumenOutput,
+    // },
+})
+
+const Product = mongoose.model('Product', productSchema, 'csvProductData');
+
 
 function sendMessage(ws, message) {
     if (ws && ws.readyState === ws.OPEN) {
@@ -28,31 +176,132 @@ function sleep(ms) {
 }
 
 
-async function convertCSVToMongo(ws) {
+// async function convertCSVToMongo(ws) {
+//     const csvFilePath = './csv_data/tubular-data.csv';
 
+//     try {
+
+//         await client.connect();
+//         const collection = client.db(database).collection(dbCollection); // Replace with your database and collection names
+
+//         // Read CSV file
+//         const csv = require('csvtojson');
+//         const jsonArray = await csv().fromFile(csvFilePath);
+//         let updatedSKUs = [];  // Store SKUs that have been updated
+//         let updatedCount = 0;  // Count of SKUs that have been updated
+//         let createdCount = 0;  // Count of SKUs that have been created
+
+
+//         for (let item of jsonArray) {
+//             // Use 'SKU' as the unique identifier for your items
+//             const result = await collection.updateOne(
+//                 { SKU: item.SKU },
+//                 { $set: item },
+//                 { upsert: true }  // This will insert the item if it doesn't exist
+//             );
+//             // If modifiedCount is 1, it means the SKU was updated
+//             if (result.modifiedCount === 1) {
+//                 updatedSKUs.push(item.SKU);
+//             }
+//         }
+
+//         if (updatedSKUs.length) {
+//             sendMessage(ws, `Updated SKUs: ${updatedSKUs.join('| ')}`);
+//         } else {
+//             sendMessage(ws, `No change required.`);
+//         }
+
+//         sendMessage(ws, `<strong>${updatedSKUs.length} row(s)</strong> have been updated into the database table: <strong>${dbCollection}</strong>`);
+
+//         await client.close()
+//     } catch (err) {
+//         console.log(err)
+//         sendMessage(ws, `Error: ${err}`)
+//     }
+// }
+async function convertCSVToMongo(ws) {
     const csvFilePath = './csv_data/tubular-data.csv';
 
-    // console.log(csvFilePath);
+    try {
+        // Connect to MongoDB
+        // await client.connect();
+        // const collection = client.db(database).collection(dbCollection);
+        await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
 
-    // Connect to MongoDB
-    await client.connect();
-    const collection = client.db(database).collection(dbCollection); // Replace with your database and collection names
 
-    // Read CSV file
-    const csv = require('csvtojson');
-    const jsonArray = await csv().fromFile(csvFilePath);
+        // Read CSV file
+        const jsonArray = await csv().fromFile(csvFilePath);
+        let updatedSKUs = [];  // Store SKUs that have been updated
+        let createdCount = 0;  // Count of SKUs that have been created
 
-    // console.log(jsonArray)
+        for (let item of jsonArray) {
+            // Use 'SKU' as the unique identifier for your items
+            const result = await Product.updateOne(
+                { SKU: item.SKU },
+                item,
+                { upsert: true, new: true, setDefaultsOnInsert: true }  // This will insert the item if it doesn't exist
+            );
 
-    // Insert JSON array into MongoDB
-    await collection.insertMany(jsonArray);
+            // Tally up the counts and updated SKUs
+            if (result.nModified === 1) {
+                updatedSKUs.push(item.SKU);
+            } else if (result.upserted) {
+                createdCount++;
+            }
+        }
 
-    // Close the connection
-    await client.close();
+        // Construct the message based on the counts
+        if (createdCount > 0) {
+            sendMessage(ws, `<strong>${createdCount} row(s)</strong> have been added to the database table: <strong>${dbCollection}</strong>`);
+        }
+        if (updatedSKUs.length > 0) {
+            sendMessage(ws, `Updated SKUs: ${updatedSKUs.join('| ')}`);
+            sendMessage(ws, `<strong>${updatedSKUs.length} row(s)</strong> have been updated in the database table: <strong>${dbCollection}</strong>`);
+        }
+        if (createdCount === 0 && updatedSKUs.length === 0) {
+            sendMessage(ws, `No change required.`);
+        }
 
-    sendMessage(ws, `Converted CSV file to MongoDB collection: ${dbCollection}`);
-
+        // Close the Mongoose connection
+        await mongoose.connection.close();
+    } catch (err) {
+        console.log(err);
+        sendMessage(ws, `Error: ${err}`);
+    }
 }
+
+
+async function processBuilder(ws) {
+    const startTime = Date.now();
+    ws.send("startTimer");
+
+    try {
+        await sleep(1000);
+        sendMessage(ws, "Fetching products from CSV...")
+        await sleep(1000);
+        await convertCSVToMongo(ws);
+    } catch (err) {
+        console.log('Error:', err);
+    }
+
+    const endTime = Date.now();
+    const elapsedTime = (endTime - startTime);
+
+    const hours = Math.floor(elapsedTime / 3600000);
+    const minutes = Math.floor((elapsedTime - (hours * 3600000)) / 60000);
+    const seconds = Math.floor((elapsedTime - (hours * 3600000) - (minutes * 60000)) / 1000);
+
+    sendMessage(ws, `Elapsed time: ${hours} hours, ${minutes} minutes, ${seconds} seconds`);
+
+    // Stop the timer on client side
+    ws.send("stopTimer");
+}
+
+
+module.exports = { processBuilder };
+
+
+// ::REFERENCE MATERIAL::
 
 
 // async function fetchFromApi(url) {
@@ -729,31 +978,6 @@ async function convertCSVToMongo(ws) {
 // }
 
 
-async function processBuilder(ws) {
-    const startTime = Date.now();
-    ws.send("startTimer");
-
-    try {
-        sendMessage(ws, "Fetching products from CSV...")
-        const allProducts = await convertCSVToMongo(ws);
-
-        console.log(allProducts);
-    } catch (err) {
-        console.log('Error:', err);
-    }
-
-    const endTime = Date.now();
-    const elapsedTime = (endTime - startTime);
-
-    const hours = Math.floor(elapsedTime / 3600000);
-    const minutes = Math.floor((elapsedTime - (hours * 3600000)) / 60000);
-    const seconds = Math.floor((elapsedTime - (hours * 3600000) - (minutes * 60000)) / 1000);
-
-    sendMessage(ws, `Elapsed time: ${hours} hours, ${minutes} minutes, ${seconds} seconds`);
-
-    // Stop the timer on client side
-    ws.send("stopTimer");
-}
 
 // async function fetchThePosts(ws, url, maxPosts = process.env.MAX_POSTS) {
 //     const startTime = Date.now();
@@ -814,5 +1038,3 @@ async function processBuilder(ws) {
 //     // Stop the timer on client side
 //     ws.send("stopTimer");
 // }
-
-module.exports = { processBuilder };
