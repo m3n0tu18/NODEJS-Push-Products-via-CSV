@@ -8,7 +8,7 @@ const uri = `${process.env.MONGO_URL}/${database}`;
 const delayTimeout = process.env.DELAY_TIMEOUT;
 const destinationURL = process.env.WP_DESTINATION_URL;
 const mongoose = require('mongoose');
-const axios = require("axios");
+// const axios = require("axios");
 const Buffer = require('buffer').Buffer;
 const { send } = require('express/lib/response');
 const xml2js = require('xml2js');
@@ -18,21 +18,21 @@ const csv = require('csvtojson');  // Move this to the top of your file for bett
 
 const WooCommerce = require("@woocommerce/woocommerce-rest-api").default
 
-// const WooCommerce = new WooCommerceRestApi({
-//     url: process.env.WOO_WEBSITE_URL,
-//     consumerKey: process.env.WOO_CONSUMER_KEY,
-//     consumerSecret: process.env.WOO_CONSUMER_SECRET,
-//     version: process.env.WOO_API_VERSION,
-//     queryStringAuth: true,
-// });
+const WooCommerceAPI = new WooCommerce({
+    url: process.env.WP_DESTINATION_URL,
+    consumerKey: process.env.WC_CONSUMER_KEY,
+    consumerSecret: process.env.WC_CONSUMER_SECRET,
+    version: process.env.WC_API_VERSION,
+    queryStringAuth: true,
+});
 
-// data cleaner upper (used in schema)
+// data cleaner upper (used in schema) (USED AND WORKS)
 function splitAndTrim(value) {
     return typeof value === 'string' ? value.split('|').map(item => item.trim()) : value;
 }
 
-// Mongo DB Schema
-const productSchema = new mongoose.Schema({
+// Mongo DB Schema (USED AND WORKS)
+const tempProductSchema = new mongoose.Schema({
     "SKU": String,
     "Parent SKU": String,
     "Product Title": String,
@@ -133,23 +133,92 @@ const productSchema = new mongoose.Schema({
     },
 })
 
-// Mongo DB Model
-const Product = mongoose.model('Product', productSchema, 'csvProductData');
+// Preparing WooCommerce Schema for Batch Upload (IN PROGRESS)
+const productSchema = new mongoose.Schema({
+    name: String,
+    slug: String,
+    date_created: String,
+    date_created_gmt: String,
+    date_modified: String,
+    date_modified_gmt: String,
+    type: String,
+    status: String,
+    featured: Boolean,
+    catalog_visibility: String,
+    description: String,
+    short_description: String,
+    sku: String,
+    price: String,
+    regular_price: String,
+    sale_price: String,
+    date_on_sale_from: String,
+    date_on_sale_from_gmt: String,
+    date_on_sale_to: String,
+    date_on_sale_to_gmt: String,
+    price_html: String,
+    on_sale: Boolean,
+    purchasable: Boolean,
+    total_sales: Number,
+    virtual: Boolean,
+    downloadable: Boolean,
+    downloads: Array,
+    download_limit: Number,
+    download_expiry: Number,
+    external_url: String,
+    button_text: String,
+    tax_status: String,
+    tax_class: String,
+    manage_stock: Boolean,
+    stock_quantity: Number,
+    stock_status: String,
+    backorders: String,
+    backorders_allowed: Boolean,
+    backordered: Boolean,
+    sold_individually: Boolean,
+    weight: String,
+    dimensions: Object,
+    shipping_required: Boolean,
+    shipping_taxable: Boolean,
+    shipping_class: String,
+    shipping_class_id: Number,
+    reviews_allowed: Boolean,
+    average_rating: String,
+    rating_count: Number,
+    related_ids: Array,
+    upsell_ids: Array,
+    cross_sell_ids: Array,
+    parent_id: Number,
+    purchase_note: String,
+    categories: Array,
+    tags: Array,
+    images: Array,
+    attributes: Array,
+    default_attributes: Array,
+    variations: Array,
+    grouped_products: Array,
+    menu_order: Number,
+    meta_data: Array,
+    _links: Object
+})
 
-// Websocket Sender function
+// Mongo DB Model (USED AND WORKS)
+const TempProduct = mongoose.model('TempProduct', tempProductSchema, 'csvProductData');
+const Product = mongoose.model('Product', productSchema, 'wooCommerceProducts')
+
+// Websocket Sender function (USED AND WORKS)
 function sendMessage(ws, message) {
     if (ws && ws.readyState === ws.OPEN) {
         ws.send(message);
     }
 }
 
-// Sleeper function
+// Sleeper function (USED AND WORKS)
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 
-// Function to convert CSV to MongoDB
+// Function to convert CSV to MongoDB (USED AND WORKS)
 async function convertCSVToMongo(ws) {
     const csvFilePath = './csv_data/tubular-data-updated.csv';
 
@@ -175,7 +244,7 @@ async function convertCSVToMongo(ws) {
             });
 
             // Use 'SKU' as the unique identifier for your items
-            const result = await Product.updateOne(
+            const result = await TempProduct.updateOne(
                 { SKU: item.SKU },
                 item,
                 { upsert: true, new: true, setDefaultsOnInsert: true }  // This will insert the item if it doesn't exist
@@ -215,14 +284,14 @@ async function convertCSVToMongo(ws) {
 }
 
 
-// Get data from Database
+// Get data from Database (UNUSED)
 async function getDataFromDatabase(ws) {
     let results = []
     try {
         await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
 
         // Fetching data from MongoDB
-        results = await Product.find({});
+        results = await TempProduct.find({});
 
         // If web socket exists, send the data
         if (ws) {
@@ -240,7 +309,7 @@ async function getDataFromDatabase(ws) {
     return results;
 }
 
-// Function to check WooCommerce for existing products
+// Function to check WooCommerce for existing products (UNUSED)
 async function checkIfProductExists(ws, sku, token, destinationURL) {
     try {
         const headers = {
@@ -249,7 +318,7 @@ async function checkIfProductExists(ws, sku, token, destinationURL) {
         };
 
         // Making a GET request to WooCommerce to find the product by SKU
-        const response = await axios.get(`${destinationURL}/wp-json/wc/v3/products`, {
+        const response = await WooCommerceAPI.get(`${destinationURL}/wp-json/wc/v3/products`, {
             headers: headers,
             params: { sku: sku }
         });
@@ -274,7 +343,7 @@ async function checkIfProductExists(ws, sku, token, destinationURL) {
     }
 }
 
-// Extract and group terms from database to new collection
+// Extract and group terms from database to new collection (USED AND WORKS)
 async function extractAttributes(ws) {
     // Connect to MongoDB
     await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
@@ -283,7 +352,7 @@ async function extractAttributes(ws) {
     const fields = ["Accessories", "Baffle Colour", "Beam Angle", "Body Colour", "Colour Temperature", "Cut-Out", "Dimming", "IP Rating", "Lumen Output", "Socket Type", "Wattage", "mA"];
 
     // Fetch only the desired fields from MongoDB
-    const products = await Product.find({}, fields).lean().exec();
+    const products = await TempProduct.find({}, fields).lean().exec();
 
     // Create a new collection called attributes
     const attributes = mongoose.connection.collection('product_attributes');
@@ -331,6 +400,861 @@ async function extractAttributes(ws) {
     }
 }
 
+
+
+// Function to fetch all results from WooCommerce with pagination (USED AND WORKS)
+async function fetchAllFromWooCommerce(endpoint, WooCommerceAPI) {
+    let page = 1;
+    let results = [];
+    while (true) {
+        const response = await WooCommerceAPI.get(endpoint, { params: { per_page: 100, page } });
+        results = results.concat(response.data);
+        if (response.data.length < 100) break; // Less than 100 results means it's the last page
+        page++;
+    }
+    return results;
+}
+
+// Add or update Global Attributes within WooCommerce (USED AND WORKS)
+async function addOrUpdateGlobalAttributes(ws, destinationURL, WooCommerceAPI) {
+    await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+    const attributes = mongoose.connection.collection('product_attributes');
+    const allAttributes = await attributes.find({}).toArray();
+
+    const existingAttributes = await fetchAllFromWooCommerce("products/attributes", WooCommerceAPI);
+
+
+    for (const attr of allAttributes) {
+        // const existingAttribute = existingAttributes.data.find(a => a.slug === attr.name.toLowerCase());
+        const existingAttribute = existingAttributes.find(a => a.slug === attr.name.toLowerCase());
+
+
+        if (existingAttribute) {
+            try {
+                // If attribute exists, update it (if necessary)
+                await WooCommerceAPI.put(`products/attributes/${existingAttribute.id}`, {
+                    name: attr.name,
+                    slug: attr.name.toLowerCase(),
+                    type: "select",
+                    order_by: "menu_order",
+                    has_archives: true,
+                    is_variation: attr.variation
+                });
+            } catch (err) {
+                console.error(`Error updating attribute: ${err.message}`);
+                continue; // Skip the current loop iteration
+            }
+
+            // When fetching terms for an attribute:
+            const existingTerms = await fetchAllFromWooCommerce(`products/attributes/${existingAttribute.id}/terms`, WooCommerceAPI);
+
+            for (const term of attr.values) {
+                const existingTerm = existingTerms.find(t => t.slug === term.toLowerCase());
+
+                try {
+                    if (existingTerm) {
+                        // If term exists, update it (if necessary)
+                        await WooCommerceAPI.put(`products/attributes/${existingAttribute.id}/terms/${existingTerm.id}`, {
+                            name: term,
+                            slug: term.toLowerCase()
+                        });
+                    } else {
+                        // If term doesn't exist, create it
+                        await WooCommerceAPI.post(`products/attributes/${existingAttribute.id}/terms`, {
+                            name: term,
+                            slug: term.toLowerCase()
+                        });
+                    }
+                } catch (err) {
+                    console.error(`Error handling term "${term}": ${err.message}`);
+                }
+
+
+            }
+
+            // Delete any terms in WooCommerce that don't exist in the database
+            for (const existingTerm of existingTerms) {
+                if (!attr.values.includes(existingTerm.name)) {
+                    try {
+                        await WooCommerceAPI.delete(`products/attributes/${existingAttribute.id}/terms/${existingTerm.id}`);
+                    } catch (err) {
+                        console.error(`Error deleting term "${existingTerm.name}": ${err.message}`);
+                    }
+                }
+            }
+
+        } else {
+            try {
+                // If attribute doesn't exist, create it and its terms
+                const attributeResponse = await WooCommerceAPI.post("products/attributes", {
+                    name: attr.name,
+                    slug: attr.name.toLowerCase(),
+                    type: "select",
+                    order_by: "menu_order",
+                    has_archives: true,
+                    is_variation: attr.variation
+                });
+
+                if (attributeResponse.data && attributeResponse.data.id) {
+                    await attributes.updateOne({ _id: attr._id }, { $set: { woo_id: attributeResponse.data.id } });
+                    for (const term of attr.values) {
+                        await WooCommerceAPI.post(`products/attributes/${attributeResponse.data.id}/terms`, {
+                            name: term,
+                            slug: term.toLowerCase()
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error(`Error creating attribute "${attr.name}": ${err.message}`);
+
+            }
+
+        }
+    }
+
+    // Delete any attributes in WooCommerce that don't exist in the database
+    for (const existingAttribute of existingAttributes) {
+        if (!allAttributes.some(attr => attr.name.toLowerCase() === existingAttribute.slug)) {
+            try {
+                await WooCommerceAPI.delete(`products/attributes/${existingAttribute.id}`);
+            } catch (err) {
+                console.error(`Error deleting attribute "${existingAttribute.slug}": ${err.message}`);
+
+            }
+        }
+    }
+
+    mongoose.connection.close();
+}
+
+
+// Add or update products within Mongo Database in preperation for pushing to WooCommerce (IN PROGRESS)
+// async function createProductsInDatabase(ws) {
+
+//     try {
+//         // Connect to MongoDB
+//         await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+
+//         const productsCollection = mongoose.connection.collection('csvProductData');
+//         const allProducts = await productsCollection.find({}).toArray();
+
+//         const attributesCollection = mongoose.connection.collection('product_attributes');
+//         const allAttributes = await attributesCollection.find({}).toArray();
+
+//         const mappedProducts = allProducts.map(product => {
+//             const mappedProduct = { ...product }; // Clone the product
+
+//             // Map the product attributes to the woo_id from the product_attributes collection
+//             mappedProduct.attributes = allAttributes.reduce((acc, attribute) => {
+//                 if (product[attribute.name]) {
+//                     acc.push({
+//                         woo_id: attribute.woo_id,
+//                         name: attribute.name,
+//                         values: product[attribute.name]
+//                     });
+//                 }
+//                 return acc;
+//             }, []);
+
+//             return mappedProduct;
+//         });
+
+//         // Define a model for the new collection and insert the mapped products.
+//         // Assuming you have a Mongoose schema for products named productSchema
+//         const MappedProduct = mongoose.model('MappedProduct', productSchema, 'mappedProducts');  // 'mappedProducts' is the name of the new collection
+//         await MappedProduct.insertMany(mappedProducts);
+
+//         mongoose.connection.close();
+
+//         if (ws) {
+//             sendMessage(ws, "Mapped products have been created and stored in a new collection!");
+//         }
+
+//     } catch (err) {
+//         console.log(err);
+//         if (ws) {
+//             sendMessage(ws, `Error: ${err}`);
+//         }
+//         mongoose.connection.close();
+//     }
+// }
+
+// async function createProductsInDatabase(ws) {
+
+//     try {
+//         // Connect to MongoDB
+//         await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+
+//         const productsCollection = mongoose.connection.collection('csvProductData');
+//         const allProducts = await productsCollection.find({}).toArray();
+
+//         const attributesCollection = mongoose.connection.collection('product_attributes');
+//         const allAttributes = await attributesCollection.find({}).toArray();
+
+//         const mappedProducts = allProducts.map(product => {
+//             const mappedProduct = {
+//                 name: product["Product Title"],
+//                 description: product["Description"],
+//                 sku: product["SKU"],
+//                 // ... You can add more mappings here as needed ...
+
+//                 attributes: allAttributes.reduce((acc, attribute) => {
+//                     if (product[attribute.name]) {
+//                         acc.push({
+//                             woo_id: attribute.woo_id,
+//                             name: attribute.name,
+//                             values: product[attribute.name].map(item => item.values).flat()  // Flatten the values array
+//                         });
+//                     }
+//                     return acc;
+//                 }, [])
+//             };
+
+//             return mappedProduct;
+//         });
+
+//         // Define a model for the new collection and insert the mapped products.
+//         const MappedProduct = mongoose.model('MappedProduct', productSchema, 'mappedProducts');
+//         await MappedProduct.insertMany(mappedProducts);
+
+//         mongoose.connection.close();
+
+//         if (ws) {
+//             sendMessage(ws, "Mapped products have been created and stored in a new collection!");
+//         }
+
+//     } catch (err) {
+//         console.log(err);
+//         if (ws) {
+//             sendMessage(ws, `Error: ${err}`);
+//         }
+//         mongoose.connection.close();
+//     }
+// }
+// async function createProductsInDatabase(ws) {
+//     let finalMappedProducts = []; // This will store both parent products and their variations
+
+//     try {
+//         // Connect to MongoDB
+//         await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+
+//         const productsCollection = mongoose.connection.collection('csvProductData');
+//         const allProducts = await productsCollection.find({}).toArray();
+
+//         const attributesCollection = mongoose.connection.collection('product_attributes');
+//         const allAttributes = await attributesCollection.find({}).toArray();
+
+//         // Extract only variations from the database
+//         const existingVariations = allProducts.filter(p => p["Variable|Simple"] === "variation").map(p => p["SKU"]);
+
+
+//         allProducts.forEach(product => {
+//             const mappedProduct = {
+//                 name: product["Product Title"],
+//                 slug: product["Product Title"].toLowerCase().replace(/[^a-zA-Z0-9]/g, '-'), // Refined slug transformation
+//                 date_created: new Date().toISOString(),
+//                 date_created_gmt: new Date().toISOString(),
+//                 date_modified: new Date().toISOString(),
+//                 date_modified_gmt: new Date().toISOString(),
+//                 status: "publish",
+//                 featured: false,
+//                 catalog_visibility: "visible",
+//                 description: product["Description"],
+//                 sku: product["SKU"],
+//                 type: product["Variable|Simple"] === "variable" ? "variable" : "variation",
+//                 height: product["Height"],
+//                 width: product["Width"],
+//                 length: product["Length"],
+//                 price: product["Trade Price"] ? product["Trade Price"].toString() : "0", // Default to "0" if null or undefined
+//                 regular_price: product["Trade Price"] ? product["Trade Price"].toString() : "0", // Default to "0" if null or undefined
+//                 attributes: allAttributes.reduce((acc, attribute) => {
+//                     if (product[attribute.name]) {
+//                         acc.push({
+//                             id: attribute.woo_id,
+//                             option: product[attribute.name].map(item => item.values).flat()
+//                         });
+//                     }
+//                     return acc;
+//                 }, []),
+//                 downloadable: product["Datasheet"] ? true : false, // Updated logic
+//                 downloads: product["Datasheet"] ? [{
+//                     name: "Downloadable File",
+//                     file: product["Datasheet"].toString()
+//                 }] : [],
+//                 images: product["Image URL"].map((url, index) => ({
+//                     src: url,
+//                     name: `Image ${index + 1}`
+//                 })),
+//                 meta_data: [
+//                     {
+//                         key: "_download_expiry",
+//                         value: "1"
+//                     },
+//                     {
+//                         key: "_download_limit",
+//                         value: "1"
+//                     },
+//                     {
+//                         key: "_download_type",
+//                         value: "standard"
+//                     },
+//                     {
+//                         key: "_sold_individually",
+//                         value: "yes"
+//                     },
+//                 ],
+//                 variations: []
+//             };
+
+//             if (product["Variable|Simple"] === "variable") {
+//                 const childVariations = generateVariations(product, existingVariations);
+
+//                 childVariations.forEach(variation => {
+//                     const finalVariation = { ...mappedProduct, ...variation };
+//                     finalMappedProducts.push(finalVariation);
+//                     mappedProduct.variations.push(finalVariation.sku); // Add the SKU to the parent's variations list
+//                 });
+
+//                 // Now, push the parent after its variations are processed
+//                 finalMappedProducts.push(mappedProduct);
+//             } else {
+//                 finalMappedProducts.push(mappedProduct);
+//             }
+
+
+//         })
+
+//         const MappedProduct = mongoose.model('MappedProduct', productSchema, 'mappedProducts');
+//         await MappedProduct.insertMany(finalMappedProducts);
+
+//         mongoose.connection.close();
+
+//         if (ws) {
+//             sendMessage(ws, "Mapped products and their variations have been created and stored in a new collection!");
+//         }
+
+//     } catch (err) {
+//         console.log(err);
+//         if (ws) {
+//             sendMessage(ws, `Error: ${err}`);
+//         }
+//         mongoose.connection.close();
+//     }
+// }
+
+// function generateVariations(product, existingVariations) {
+//     const attributesForVariation = Object.keys(product).filter(attr => {
+//         return product[attr] && product[attr][0] && product[attr][0].variation;
+//     });
+
+//     const allCombinations = generateAllCombinations(attributesForVariation.map(attr => product[attr][0].values));
+
+
+//     const variations = allCombinations.map(combination => {
+//         const variationName = `${product["Product Title"]} ${combination.join(' / ')}`;
+//         const variationSKU = `${product["SKU"]}-${combination.join('-')}`;
+//         const variationSlug = variationName.toLowerCase().replace(/[^a-zA-Z0-9]/g, '-');
+
+
+//         return {
+//             // ... other fields ...
+//             name: variationName,
+//             sku: variationSKU,
+//             slug: variationSlug,
+//             type: "variation",
+//             // ... other fields ...
+//         };
+//     });
+
+//     // Filter out variations that don't already exist in the database.
+//     return variations.filter(variation => existingVariations.includes(variation.sku));
+// }
+
+// function generateAllCombinations(arrays) {
+//     if (arrays.length === 1) return arrays[0].map(val => [val]);
+//     const combinations = [];
+//     const rest = generateAllCombinations(arrays.slice(1));
+//     for (let i = 0; i < rest.length; i++) {
+//         for (let j = 0; j < arrays[0].length; j++) {
+//             combinations.push([arrays[0][j], ...rest[i]]);
+//         }
+//     }
+//     return combinations;
+// }
+
+
+// const mongoose = require('mongoose');
+
+async function mapProductsForWooCommerce(ws) {
+    let finalMappedProducts = [];
+
+    try {
+        // Connect to MongoDB
+        await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+
+        const productsCollection = mongoose.connection.collection('csvProductData');
+        const allProducts = await productsCollection.find({}).toArray();
+
+        const attributesCollection = mongoose.connection.collection('product_attributes');
+        const allAttributes = await attributesCollection.find({}).toArray();
+
+        const parentProducts = allProducts.filter(product => product["Variable|Simple"] === "variable");
+        const variations = allProducts.filter(product => product["Variable|Simple"] === "variation");
+
+        parentProducts.forEach(parentProduct => {
+            const mappedParentProduct = mapProductToWooFormat(parentProduct, allAttributes);
+            mappedParentProduct.variations = [];
+
+            variations.forEach(variation => {
+                if (variation["Parent SKU"] === parentProduct["SKU"]) {
+                    const mappedVariation = mapProductToWooFormat(variation, allAttributes);
+                    finalMappedProducts.push(mappedVariation);
+                    mappedParentProduct.variations.push(mappedVariation.sku);
+                }
+            });
+
+            finalMappedProducts.push(mappedParentProduct);
+        });
+
+        const MappedProduct = mongoose.model('MappedProduct', productSchema, 'mappedProducts');
+        await MappedProduct.insertMany(finalMappedProducts);
+
+        mongoose.connection.close();
+
+        if (ws) {
+            sendMessage(ws, "Mapped products and their variations have been created and stored in the mappedProducts collection!");
+        }
+        return finalMappedProducts;
+
+    } catch (err) {
+        console.log(err);
+        if (ws) {
+            sendMessage(ws, `Error: ${err}`);
+        }
+        mongoose.connection.close();
+    }
+}
+
+function mapProductToWooFormat(product, allAttributes) {
+    return {
+        name: product["Product Title"],
+        slug: product["Product Title"].toLowerCase().replace(/[^a-zA-Z0-9]/g, '-'),
+        date_created: new Date().toISOString(),
+        date_created_gmt: new Date().toISOString(),
+        date_modified: new Date().toISOString(),
+        date_modified_gmt: new Date().toISOString(),
+        status: "publish",
+        featured: false,
+        catalog_visibility: "visible",
+        description: product["Description"],
+        sku: product["SKU"],
+        type: product["Variable|Simple"] === "variable" ? "variable" : "variation",
+        price: product["Trade Price"] ? product["Trade Price"].toString() : "0",
+        regular_price: product["Trade Price"] ? product["Trade Price"].toString() : "0",
+        attributes: allAttributes.reduce((acc, attribute) => {
+            if (product[attribute.name]) {
+                acc.push({
+                    id: attribute.woo_id,
+                    option: product[attribute.name].map(item => item.values).flat()
+                });
+            }
+            return acc;
+        }, []),
+        downloadable: product["Datasheet"] ? true : false,
+        downloads: product["Datasheet"] ? [{
+            name: "Downloadable File",
+            file: product["Datasheet"].toString()
+        }] : [],
+        images: product["Image URL"].map((url, index) => ({
+            src: url,
+            name: `Image ${index + 1}`
+        })),
+        meta_data: [
+            {
+                key: "_download_expiry",
+                value: "1"
+            },
+            {
+                key: "_download_limit",
+                value: "1"
+            },
+            {
+                key: "_download_type",
+                value: "standard"
+            },
+            {
+                key: "_sold_individually",
+                value: "yes"
+            },
+        ],
+        variations: []
+    };
+}
+
+// async function pushProductsToWooCommerce(mappedProducts) {
+//     try {
+//         // Separate variable products and variations
+//         const variableProducts = mappedProducts.filter(p => p.type === "variable");
+//         const variations = mappedProducts.filter(p => p.type === "variation");
+
+
+//         // Prepare data for parent variable products
+//         const parentProductsData = variableProducts.map(product => {
+//             return {
+//                 name: product.name,
+//                 slug: product.slug,
+//                 type: product.type,
+//                 status: product.status,
+//                 description: product.description,
+//                 sku: product.sku,
+//                 price: product.price,
+//                 regular_price: product.regular_price,
+//                 attributes: product.attributes,
+//                 downloads: product.downloads,
+//                 images: product.images
+//             };
+//         });
+
+//         // Split the parent products data into chunks of 100
+//         const parentProductsChunks = chunkArray(parentProductsData, 100);
+
+//         let createdParentIds = [];
+//         for (const chunk of parentProductsChunks) {
+//             const response = await WooCommerceAPI.post("products/batch", { create: chunk });
+//             createdParentIds = createdParentIds.concat(response.data.create.map(p => p.id));
+//         }
+
+//         // Prepare data for variations
+//         const variationsData = [];
+//         createdParentIds.forEach(parentId => {
+//             const childVariations = variations.filter(v => v.sku.startsWith(parentId.toString())); // use parentId directly
+
+//             const variationData = childVariations.map(variation => {
+//                 return {
+//                     regular_price: variation.regular_price,
+//                     attributes: variation.attributes,
+//                     sku: variation.sku
+//                 };
+//             });
+//             variationsData.push({ parentId: parentId, data: variationData });
+//         });
+
+//         // Split the variations data into chunks of 100
+//         for (let variationBatch of variationsData) {
+//             const variationChunks = chunkArray(variationBatch.data, 100);
+//             for (const chunk of variationChunks) {
+//                 await WooCommerceAPI.post(`products/${variationBatch.parentId}/variations/batch`, { create: chunk });
+//             }
+//         }
+
+//         console.log("Successfully pushed products and their variations to WooCommerce!");
+
+
+//         // Split the parent products data into chunks of 100
+//         // const parentProductsChunks = chunkArray(parentProductsData, 100);
+
+//         // let createdParentIds = [];
+//         // for (const chunk of parentProductsChunks) {
+//         //     const response = await WooCommerce.post("products/batch", { create: chunk });
+//         //     createdParentIds = createdParentIds.concat(response.data.create.map(p => p.id));
+//         // }
+
+//         // // Batch create parent variable products
+//         // const parentProductsResponse = await WooCommerceAPI.post("products/batch", { create: parentProductsData });
+
+//         // // Extract IDs of created parent products
+//         // const createdParentIds = parentProductsResponse.data.create.map(p => p.id);
+
+//         // Prepare data for variations
+//         // const variationsData = [];
+//         // createdParentIds.forEach(parentId => {
+//         //     const parentSKU = parentProductsResponse.data.create.find(p => p.id === parentId).sku;
+//         //     const childVariations = variations.filter(v => v.sku.startsWith(parentSKU));
+
+//         //     const variationData = childVariations.map(variation => {
+//         //         return {
+//         //             // ... same logic as before
+//         //         };
+//         //     });
+//         //     variationsData.push({ parentId: parentId, data: variationData });
+//         // });
+
+//         // // Split the variations data into chunks of 100
+//         // for (let variationBatch of variationsData) {
+//         //     const variationChunks = chunkArray(variationBatch.data, 100);
+//         //     for (const chunk of variationChunks) {
+//         //         await WooCommerce.post(`products/${variationBatch.parentId}/variations/batch`, { create: chunk });
+//         //     }
+//         // }
+
+//         // console.log("Successfully pushed products and their variations to WooCommerce!");
+
+//         // // Prepare data for variations
+//         // const variationsData = [];
+//         // createdParentIds.forEach(parentId => {
+//         //     const parentSKU = parentProductsResponse.data.create.find(p => p.id === parentId).sku;
+//         //     const childVariations = variations.filter(v => v.sku.startsWith(parentSKU));
+
+//         //     const variationData = childVariations.map(variation => {
+//         //         return {
+//         //             regular_price: variation.regular_price,
+//         //             attributes: variation.attributes,
+//         //             sku: variation.sku
+//         //         };
+//         //     });
+//         //     variationsData.push({ parentId: parentId, data: variationData });
+//         // });
+
+//         // // Batch create variations for each parent product
+//         // for (let variationBatch of variationsData) {
+//         //     await WooCommerceAPI.post(`products/${variationBatch.parentId}/variations/batch`, { create: variationBatch.data });
+//         // }
+
+//         // console.log("Successfully pushed products and their variations to WooCommerce!");
+
+//     } catch (error) {
+//         console.log("Error pushing products to WooCommerce:", error);
+//     }
+// }
+
+// async function pushProductsToWooCommerce(mappedProducts) {
+//     try {
+//         // Separate variable products and variations
+//         const variableProducts = mappedProducts.filter(p => p.type === "variable");
+//         const variations = mappedProducts.filter(p => p.type === "variation");
+
+//         // Prepare data for parent variable products
+//         const parentProductsData = variableProducts.map(product => {
+//             return {
+//                 name: product.name,
+//                 slug: product.slug,
+//                 type: product.type,
+//                 status: product.status,
+//                 description: product.description,
+//                 sku: product.sku,
+//                 price: product.price,
+//                 regular_price: product.regular_price,
+//                 attributes: product.attributes,
+//                 downloads: product.downloads,
+//                 images: product.images
+//             };
+//         });
+
+//         // Split the parent products data into chunks of 100
+//         const parentProductsChunks = chunkArray(parentProductsData, 100);
+
+//         let createdParentIds = [];
+//         let createdParentNames = [];
+//         for (const chunk of parentProductsChunks) {
+//             const response = await WooCommerceAPI.post("products/batch", { create: chunk });
+//             createdParentIds = createdParentIds.concat(response.data.create.map(p => p.id));
+//             createdParentNames = createdParentNames.concat(response.data.create.map(p => p.name));
+//         }
+
+//         // Prepare data for variations
+//         const variationsData = [];
+//         createdParentNames.forEach((parentName, index) => {
+//             const parentId = createdParentIds[index];
+//             const childVariations = variations.filter(v => v.parent === parentName);
+
+//             const variationData = childVariations.map(variation => {
+//                 return {
+//                     regular_price: variation.regular_price,
+//                     attributes: variation.attributes,
+//                     sku: variation.sku
+//                 };
+//             });
+//             variationsData.push({ parentId: parentId, data: variationData });
+//         });
+
+//         // Split the variations data into chunks of 100
+//         for (let variationBatch of variationsData) {
+//             const variationChunks = chunkArray(variationBatch.data, 100);
+//             for (const chunk of variationChunks) {
+//                 await WooCommerceAPI.post(`products/${variationBatch.parentId}/variations/batch`, { create: chunk });
+//             }
+//         }
+
+//         console.log("Successfully pushed products and their variations to WooCommerce!");
+
+//     } catch (error) {
+//         console.log("Error pushing products to WooCommerce:", error);
+//     }
+// }
+
+
+// async function pushProductsToWooCommerce(mappedProducts) {
+//     try {
+//         // Separate variable products and variations
+//         const variableProducts = mappedProducts.filter(p => p.type === "variable");
+//         const variations = mappedProducts.filter(p => p.type === "variation");
+
+//         // Prepare data for parent variable products
+//         const parentProductsData = variableProducts.map(product => {
+//             return {
+//                 name: product.name,
+//                 slug: product.slug,
+//                 type: product.type,
+//                 status: product.status,
+//                 description: product.description,
+//                 sku: product.sku,
+//                 price: product.price,
+//                 regular_price: product.regular_price,
+//                 attributes: product.attributes.map(attr => ({
+//                     name: attr.name,
+//                     visible: true,
+//                     variation: attr.variation,
+//                     options: [attr.option]
+//                 })),
+//                 downloads: product.downloads,
+//                 images: product.images
+//             };
+//         });
+
+//         // Split the parent products data into chunks of 100
+//         const parentProductsChunks = chunkArray(parentProductsData, 100);
+
+//         let createdParentSkus = [];
+//         let createdParentIds = [];
+//         for (const chunk of parentProductsChunks) {
+//             const response = await WooCommerceAPI.post("products/batch", { create: chunk });
+//             createdParentIds = createdParentIds.concat(response.data.create.map(p => p.id));
+//             createdParentSkus = createdParentSkus.concat(response.data.create.map(p => p.sku));
+//         }
+
+//         // Prepare data for variations
+//         const variationsData = [];
+//         createdParentSkus.forEach((parentSku, index) => {
+//             const parentId = createdParentIds[index];
+//             const childVariations = variations.filter(v => v.sku.startsWith(parentSku));
+
+//             const variationData = childVariations.map(variation => {
+//                 return {
+//                     regular_price: variation.regular_price,
+//                     attributes: variation.attributes.map(attr => ({
+//                         name: attr.name,
+//                         option: attr.option
+//                     })),
+//                     sku: variation.sku
+//                 };
+//             });
+//             variationsData.push({ parentId: parentId, data: variationData });
+//         });
+
+//         // Split the variations data into chunks of 100
+//         for (let variationBatch of variationsData) {
+//             const variationChunks = chunkArray(variationBatch.data, 100);
+//             for (const chunk of variationChunks) {
+//                 await WooCommerceAPI.post(`products/${variationBatch.parentId}/variations/batch`, { create: chunk });
+//             }
+//         }
+
+//         console.log("Successfully pushed products and their variations to WooCommerce!");
+
+//     } catch (error) {
+//         console.log("Error pushing products to WooCommerce:", error);
+//     }
+// }
+
+async function pushProductsToWooCommerce(ws, mappedProducts) {
+    try {
+        // Separate variable products and variations
+        const variableProducts = mappedProducts.filter(p => p.type === "variable");
+        const variations = mappedProducts.filter(p => p.type === "variation");
+
+        // Prepare data for parent variable products
+        const parentProductsData = variableProducts.map(product => {
+            return {
+                name: product.name,
+                slug: product.slug,
+                type: product.type,
+                status: product.status,
+                description: product.description,
+                sku: product.sku,
+                price: product.price,
+                regular_price: product.regular_price,
+                attributes: product.attributes.map(attr => ({
+                    name: attr.name,
+                    visible: true,
+                    variation: true,
+                    options: [attr.option]
+                })),
+                downloads: product.downloads,
+                images: product.images
+            };
+        });
+
+        console.log("Preparing to upload parent products...");
+        sendMessage(ws, "Preparing to upload parent products...")
+
+        // Split the parent products data into chunks of 100
+        const parentProductsChunks = chunkArray(parentProductsData, 100);
+
+        let createdParentSkus = [];
+        let createdParentIds = [];
+        for (const chunk of parentProductsChunks) {
+            const response = await WooCommerceAPI.post("products/batch", { create: chunk });
+            createdParentIds = createdParentIds.concat(response.data.create.map(p => p.id));
+            createdParentSkus = createdParentSkus.concat(response.data.create.map(p => p.sku));
+        }
+
+        console.log(`Successfully uploaded ${createdParentIds.length} parent products.`);
+        sendMessage(ws, `Successfully uploaded ${createdParentIds.length} parent products.`)
+
+        // Prepare data for variations
+        const variationsData = [];
+        createdParentSkus.forEach((parentSku, index) => {
+            const parentId = createdParentIds[index];
+            const childVariations = variations.filter(v => v.sku.startsWith(parentSku));
+
+            const variationData = childVariations.map(variation => {
+                return {
+                    regular_price: variation.regular_price,
+                    attributes: variation.attributes.map(attr => ({
+                        name: attr.name,
+                        option: attr.option
+                    })),
+                    sku: variation.sku
+                };
+            });
+            variationsData.push({ parentId: parentId, data: variationData });
+        });
+
+        console.log("Preparing to upload variations...");
+        sendMessage(ws, "Preparing to upload variations...")
+
+        let totalVariationsUploaded = 0;
+        // Split the variations data into chunks of 100
+        for (let variationBatch of variationsData) {
+            const variationChunks = chunkArray(variationBatch.data, 100);
+            for (const chunk of variationChunks) {
+                await WooCommerceAPI.post(`products/${variationBatch.parentId}/variations/batch`, { create: chunk });
+                totalVariationsUploaded += chunk.length;
+            }
+        }
+
+        console.log(`Successfully uploaded ${totalVariationsUploaded} variations.`);
+        sendMessage(ws, `Successfully uploaded ${totalVariationsUploaded} variations.`)
+
+        console.log("Successfully pushed products and their variations to WooCommerce!");
+        sendMessage(ws, "Successfully pushed products and their variations to WooCommerce!")
+
+    } catch (error) {
+        console.log("Error pushing products to WooCommerce:", error);
+        sendMessage(ws, `Error pushing products to WooCommerce: ${error}`)
+    }
+}
+
+
+
+// Utility function to split an array into chunks
+function chunkArray(array, chunkSize) {
+    const chunks = [];
+    for (let i = 0; i < array.length; i += chunkSize) {
+        chunks.push(array.slice(i, i + chunkSize));
+    }
+    return chunks;
+}
 
 // Add global products attributes and terms to WooCommerce
 
@@ -412,131 +1336,46 @@ async function extractAttributes(ws) {
 //     }
 // }
 
-// Function to fetch all results from WooCommerce with pagination
-async function fetchAllFromWooCommerce(endpoint, WooCommerceAPI) {
-    let page = 1;
-    let results = [];
-    while (true) {
-        const response = await WooCommerceAPI.get(endpoint, { params: { per_page: 100, page } });
-        results = results.concat(response.data);
-        if (response.data.length < 100) break; // Less than 100 results means it's the last page
-        page++;
-    }
-    return results;
-}
-
-async function addOrUpdateGlobalAttributes(ws, destinationURL) {
+/* Removed from use as might not actually be working as expected.
+async function addOrUpdateProducts() {
+    // Connect to MongoDB
     await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
-    const attributes = mongoose.connection.collection('product_attributes');
-    const allAttributes = await attributes.find({}).toArray();
 
-    const WooCommerceAPI = new WooCommerce({
-        url: destinationURL,
-        consumerKey: process.env.WC_CONSUMER_KEY,
-        consumerSecret: process.env.WC_CONSUMER_SECRET,
-        wpAPI: true,
-        version: 'wc/v3',
-        queryStringAuth: true
-    });
+    const productsCollection = mongoose.connection.collection('csvProductData');
+    const allProducts = await productsCollection.find({}).toArray();
 
-    const existingAttributes = await fetchAllFromWooCommerce("products/attributes", WooCommerceAPI);
+    const attributesCollection = mongoose.connection.collection('product_attributes');
+    const allAttributes = await attributesCollection.find({}).toArray();
 
+    // Set up WooCommerce API (similar to previous function)
 
-    for (const attr of allAttributes) {
-        // const existingAttribute = existingAttributes.data.find(a => a.slug === attr.name.toLowerCase());
-        const existingAttribute = existingAttributes.find(a => a.slug === attr.name.toLowerCase());
+    for (const product of allProducts) {
+        if (product["Variable|Simple"] === "variable" || !product["Parent SKU"]) {
+            // This is a parent product
+            const existingProduct = await fetchProductFromWooCommerceBySKU(product.SKU, WooCommerceAPI);
 
+            // Map the product attributes to the woo_id from the product_attributes collection
+            product.attributes = await mapAttributesToWooIds(product, allAttributes);
 
-        if (existingAttribute) {
-            try {
-                // If attribute exists, update it (if necessary)
-                await WooCommerceAPI.put(`products/attributes/${existingAttribute.id}`, {
-                    name: attr.name,
-                    slug: attr.name.toLowerCase(),
-                    type: "select",
-                    order_by: "menu_order",
-                    has_archives: true,
-                    is_variation: attr.variation
-                });
-            } catch (err) {
-                console.error(`Error updating attribute: ${err.message}`);
-                continue; // Skip the current loop iteration
-            }
-
-            // When fetching terms for an attribute:
-            const existingTerms = await fetchAllFromWooCommerce(`products/attributes/${existingAttribute.id}/terms`, WooCommerceAPI);
-
-            for (const term of attr.values) {
-                const existingTerm = existingTerms.find(t => t.slug === term.toLowerCase());
-
-                try {
-                    if (existingTerm) {
-                        // If term exists, update it (if necessary)
-                        await WooCommerceAPI.put(`products/attributes/${existingAttribute.id}/terms/${existingTerm.id}`, {
-                            name: term,
-                            slug: term.toLowerCase()
-                        });
-                    } else {
-                        // If term doesn't exist, create it
-                        await WooCommerceAPI.post(`products/attributes/${existingAttribute.id}/terms`, {
-                            name: term,
-                            slug: term.toLowerCase()
-                        });
-                    }
-                } catch (err) {
-                    console.error(`Error handling term "${term}": ${err.message}`);
-                }
-
-
-            }
-
-            // Delete any terms in WooCommerce that don't exist in the database
-            for (const existingTerm of existingTerms) {
-                if (!attr.values.includes(existingTerm.name)) {
-                    try {
-                        await WooCommerceAPI.delete(`products/attributes/${existingAttribute.id}/terms/${existingTerm.id}`);
-                    } catch (err) {
-                        console.error(`Error deleting term "${existingTerm.name}": ${err.message}`);
-                    }
-                }
+            if (existingProduct) {
+                await updateProductInWooCommerce(product, existingProduct.id, WooCommerceAPI);
+            } else {
+                await createProductInWooCommerce(product, WooCommerceAPI);
             }
 
         } else {
-            try {
-                // If attribute doesn't exist, create it and its terms
-                const attributeResponse = await WooCommerceAPI.post("products/attributes", {
-                    name: attr.name,
-                    slug: attr.name.toLowerCase(),
-                    type: "select",
-                    order_by: "menu_order",
-                    has_archives: true,
-                    is_variation: attr.variation
-                });
-
-                if (attributeResponse.data && attributeResponse.data.id) {
-                    for (const term of attr.values) {
-                        await WooCommerceAPI.post(`products/attributes/${attributeResponse.data.id}/terms`, {
-                            name: term,
-                            slug: term.toLowerCase()
-                        });
-                    }
-                }
-            } catch (err) {
-                console.error(`Error creating attribute "${attr.name}": ${err.message}`);
-
+            // This is a child product
+            const parentProduct = allProducts.find(p => p.SKU === product["Parent SKU"]);
+            if (!parentProduct) {
+                console.error(`Parent product not found for SKU: ${product.SKU}`);
+                continue;
             }
 
-        }
-    }
-
-    // Delete any attributes in WooCommerce that don't exist in the database
-    for (const existingAttribute of existingAttributes) {
-        if (!allAttributes.some(attr => attr.name.toLowerCase() === existingAttribute.slug)) {
-            try {
-                await WooCommerceAPI.delete(`products/attributes/${existingAttribute.id}`);
-            } catch (err) {
-                console.error(`Error deleting attribute "${existingAttribute.slug}": ${err.message}`);
-
+            const existingVariation = await fetchVariationFromWooCommerceBySKU(product.SKU, WooCommerceAPI);
+            if (existingVariation) {
+                await updateVariationInWooCommerce(product, parentProduct, existingVariation.id, WooCommerceAPI);
+            } else {
+                await createVariationInWooCommerce(product, parentProduct, WooCommerceAPI);
             }
         }
     }
@@ -544,8 +1383,105 @@ async function addOrUpdateGlobalAttributes(ws, destinationURL) {
     mongoose.connection.close();
 }
 
+async function fetchProductFromWooCommerceBySKU(sku, WooCommerceAPI) {
+    try {
+        const response = await WooCommerceAPI.get(`products`, { sku: sku });
+        if (response.data && response.data.length > 0) {
+            return response.data[0];
+        }
+        return null;
+    } catch (err) {
+        console.error(`Failed to fetch product by SKU ${sku}: ${err.message}`, err.response ? err.response.data : "");
+        return null;
+    }
+}
 
+async function updateProductInWooCommerce(productData, productId, WooCommerceAPI) {
+    try {
+        await WooCommerceAPI.put(`products/${productId}`, productData);
+    } catch (err) {
+        console.error(`Failed to update product: ${err.message}`);
+    }
+}
 
+async function createProductInWooCommerce(productData, WooCommerceAPI) {
+    try {
+        await WooCommerceAPI.post(`products`, productData);
+    } catch (err) {
+        console.error(`Failed to create product: ${err.message}`);
+    }
+}
+
+async function fetchVariationFromWooCommerceBySKU(sku, WooCommerceAPI) {
+    try {
+        const response = await WooCommerceAPI.get(`products/variations`, { sku: sku });
+        if (response.data && response.data.length > 0) {
+            return response.data[0];
+        }
+        return null;
+    } catch (err) {
+        console.error(`Failed to fetch variation by SKU: ${err.message}`);
+        return null;
+    }
+}
+
+async function updateVariationInWooCommerce(variationData, parentProduct, variationId, WooCommerceAPI) {
+    try {
+        await WooCommerceAPI.put(`products/${parentProduct.id}/variations/${variationId}`, variationData);
+    } catch (err) {
+        console.error(`Failed to update variation: ${err.message}`);
+    }
+}
+
+async function createVariationInWooCommerce(variationData, parentProduct, WooCommerceAPI) {
+    try {
+        await WooCommerceAPI.post(`products/${parentProduct.id}/variations`, variationData);
+    } catch (err) {
+        console.error(`Failed to create variation for parent SKU ${parentProduct.SKU} and child SKU ${variationData.SKU}: ${err.message}`, err.response ? err.response.data : "");
+
+    }
+}
+
+async function mapAttributesToWooIds(product, attributesCollection) {
+    // Create a new array to store the mapped attributes
+    const mappedAttributes = [];
+
+    for (const attribute of Object.keys(product)) {
+        if (Array.isArray(product[attribute]) && product[attribute].length > 0 && typeof product[attribute][0] === 'object' && product[attribute][0].variation) {
+            // Find the corresponding attribute in the product_attributes collection
+            const globalAttribute = attributesCollection.find(attr => attr.name === attribute);
+            if (globalAttribute && globalAttribute.woo_id) {
+                // Map the attribute value to the woo_id
+                mappedAttributes.push({
+                    id: globalAttribute.woo_id,
+                    options: product[attribute][0].values
+                });
+            }
+        }
+    }
+
+    return mappedAttributes;
+}
+*/
+
+// async function mapAttributesToWooIds(product, attributesCollection) {
+//     // Create a new array to store the mapped attributes
+//     const mappedAttributes = [];
+
+//     for (const attribute of product.attributes) {
+//         // Find the corresponding attribute in the product_attributes collection
+//         const globalAttribute = attributesCollection.find(attr => attr.name === attribute.name);
+//         if (globalAttribute && globalAttribute.woo_id) {
+//             // Map the attribute value to the woo_id
+//             mappedAttributes.push({
+//                 id: globalAttribute.woo_id,
+//                 options: attribute.values // assuming the values don't change
+//             });
+//         }
+//     }
+
+//     return mappedAttributes;
+// }
 
 
 
@@ -555,20 +1491,28 @@ async function processBuilder(ws) {
     ws.send("startTimer");
 
     try {
-        await sleep(delayTimeout);
-        sendMessage(ws, "Fetching products from CSV...")
-        await sleep(delayTimeout);
-        await convertCSVToMongo(ws); // WORKS
+        // WORKS
+        // await sleep(delayTimeout);
+        // sendMessage(ws, "Fetching products from CSV...")
+        // await sleep(delayTimeout);
+        // await convertCSVToMongo(ws);
 
-        // const filter = { "SKU": "TUB-1-1-1" }
-        // const getData = await getDataFromDatabase(ws, filter)
-        await sleep(delayTimeout);
-        sendMessage(ws, "Extracting attributes to new collection")
-        await extractAttributes(ws)
+        // await sleep(delayTimeout);
+        // sendMessage(ws, "Extracting attributes to new collection")
+        // await extractAttributes(ws)
 
-        await sleep(delayTimeout)
-        sendMessage(ws, "Adding global attributes to WooCommerce")
-        await addOrUpdateGlobalAttributes(ws, destinationURL)
+        // await sleep(delayTimeout)
+        // sendMessage(ws, "Adding global attributes to WooCommerce")
+        // await addOrUpdateGlobalAttributes(ws, destinationURL, WooCommerceAPI)
+        // WORKS
+
+        await sleep(delayTimeout);
+        sendMessage(ws, "Mapping products for WooCommerce...");
+        const mappedProducts = await mapProductsForWooCommerce(ws);
+
+        // addOrUpdateProducts()
+        await pushProductsToWooCommerce(ws, mappedProducts);
+
         // console.log(getData)
         // sendMessage(ws, getData)
         sendMessage(ws, "Process completed...")
