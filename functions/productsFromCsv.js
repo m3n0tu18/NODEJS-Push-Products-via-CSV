@@ -1,5 +1,7 @@
 require("dotenv").config();
 // const MongoClient = require('mongodb').MongoClient;
+
+
 const dbCollection = process.env.COLLECTION;
 const database = process.env.DATABASE;
 const uri = `${process.env.MONGO_URL}/${database}`;
@@ -14,6 +16,15 @@ const path = require('path');
 const fs = require('fs')
 const csv = require('csvtojson');  // Move this to the top of your file for better performance
 
+const WooCommerce = require("@woocommerce/woocommerce-rest-api").default
+
+// const WooCommerce = new WooCommerceRestApi({
+//     url: process.env.WOO_WEBSITE_URL,
+//     consumerKey: process.env.WOO_CONSUMER_KEY,
+//     consumerSecret: process.env.WOO_CONSUMER_SECRET,
+//     version: process.env.WOO_API_VERSION,
+//     queryStringAuth: true,
+// });
 
 // data cleaner upper (used in schema)
 function splitAndTrim(value) {
@@ -41,85 +52,54 @@ const productSchema = new mongoose.Schema({
     },
 
     "Body Colour": {
-        // variation: { type: Boolean, default: true },
-        // values: {
         type: Array,
         get: values => values,
         set: splitAndTrim,
-        // }
     },
     "Baffle Colour": {
-        // variation: { type: Boolean, default: true },
-        // values: {
         type: Array,
         get: values => values,
         set: splitAndTrim
-        // }
     },
     "Socket Type": {
-        // variation: { type: Boolean, default: true },
-        // values: {
         type: Array,
         get: values => values,
         set: splitAndTrim
-        // }
-
     },
     "Wattage": {
-        // variation: { type: Boolean, default: true },
-        // values: {
         type: Array,
         get: values => values,
         set: splitAndTrim
-
     },
     "Colour Temperature": {
-        // variation: { type: Boolean, default: true },
-        // values: {
         type: Array,
         get: values => values,
         set: splitAndTrim
-        // }
     },
     "Beam Angle": {
-        // variation: { type: Boolean, default: true },
-        // values: {
         type: Array,
         get: values => values,
         set: splitAndTrim
-        // }
     },
     "Dimming": {
-        // variation: { type: Boolean, default: true },
-        // values: {
         type: Array,
         get: values => values,
         set: splitAndTrim
-        // }
     },
     "Accessories": {
-        // variation: { type: Boolean, default: true },
-        // values: {
         type: Array,
         get: values => values,
         set: splitAndTrim
-        // }
     },
     "mA": {
-        // variation: { type: Boolean, default: true },
-        // values: {
         type: Array,
         get: values => values,
         set: splitAndTrim
-        // }
     },
     "Lumen Output": {
-        // variation: { type: Boolean, default: true },
-        // values: {
         type: Array,
         get: values => values,
         set: splitAndTrim
-        // }
     },
     "Height": String,
     "Width": String,
@@ -151,11 +131,6 @@ const productSchema = new mongoose.Schema({
         get: datasheet => datasheet,
         set: datasheet => typeof datasheet === 'string' ? datasheet.split('|').map(tag => tag.trim()) : datasheet,
     },
-    // "Lumen Output": {
-    //     type: Array,
-    //     get: lumenOutput => lumenOutput,
-    //     set: lumenOutput => typeof lumenOutput === 'string' ? lumenOutput.split('|').map(tag => tag.trim()) : lumenOutput,
-    // },
 })
 
 // Mongo DB Model
@@ -176,7 +151,7 @@ function sleep(ms) {
 
 // Function to convert CSV to MongoDB
 async function convertCSVToMongo(ws) {
-    const csvFilePath = './csv_data/tubular-data.csv';
+    const csvFilePath = './csv_data/tubular-data-updated.csv';
 
     try {
         await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
@@ -299,6 +274,278 @@ async function checkIfProductExists(ws, sku, token, destinationURL) {
     }
 }
 
+// Extract and group terms from database to new collection
+async function extractAttributes(ws) {
+    // Connect to MongoDB
+    await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+
+    // Fields to extract from the database
+    const fields = ["Accessories", "Baffle Colour", "Beam Angle", "Body Colour", "Colour Temperature", "Cut-Out", "Dimming", "IP Rating", "Lumen Output", "Socket Type", "Wattage", "mA"];
+
+    // Fetch only the desired fields from MongoDB
+    const products = await Product.find({}, fields).lean().exec();
+
+    // Create a new collection called attributes
+    const attributes = mongoose.connection.collection('product_attributes');
+
+    // Use a set to keep track of existing attributes and their values
+    const attributeCache = {};
+
+    // Loop through each product
+    for (const product of products) {
+        // Loop through each attribute in the product
+        for (const attribute of fields) {
+            const attrData = product[attribute];
+
+            // Check if attrData is an array and has relevant attribute structure
+            if (Array.isArray(attrData) && attrData[0] && attrData[0].variation !== undefined) {
+                const variation = attrData[0].variation;
+
+                for (const attrVal of attrData[0].values) {
+                    if (!attributeCache[attribute]) {
+                        // Fetch attribute from database if not in cache
+                        const existingAttribute = await attributes.findOne({ name: attribute });
+                        attributeCache[attribute] = existingAttribute ? new Set(existingAttribute.values) : new Set();
+
+                        // If it doesn't exist in the database, create it
+                        if (!existingAttribute) {
+                            await attributes.insertOne({
+                                name: attribute,
+                                variation: variation,
+                                values: []
+                            });
+                        }
+                    }
+
+                    // If value is not in cache, add to both cache and database
+                    if (!attributeCache[attribute].has(attrVal)) {
+                        attributeCache[attribute].add(attrVal);
+                        await attributes.updateOne(
+                            { name: attribute },
+                            { $push: { values: attrVal } }
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+// Add global products attributes and terms to WooCommerce
+
+// async function addGlobalAttributes(ws, destinationURL) {
+
+//     // Connect to MongoDB
+//     await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+
+//     // Get collection called product_attributes
+//     const attributes = mongoose.connection.collection('product_attributes');
+
+//     // Get all the attributes from the database
+//     const allAttributes = await attributes.find({}).toArray();
+
+//     // Create WooCommerce API instance
+//     const WooCommerceAPI = new WooCommerce({
+//         url: destinationURL,
+//         consumerKey: process.env.WC_CONSUMER_KEY,   // Replace with your consumer key
+//         consumerSecret: process.env.WC_CONSUMER_SECRET,  // Replace with your consumer secret
+//         wpAPI: true,
+//         version: 'wc/v3',
+//         queryStringAuth: true  // Force Basic Authentication as query string true and using under HTTPS
+//     });
+
+//     // Loop through all attributes and push to WooCommerce
+//     for (const attr of allAttributes) {
+//         // Prepare the attribute data for WooCommerce
+//         const itemData = {
+//             name: attr.name,
+//             slug: attr.name.toLowerCase(),
+//             type: "select",
+//             order_by: "menu_order",
+//             has_archives: true,
+//             is_variation: attr.variation,
+//             terms: attr.values.map((value) => ({
+//                 name: value,
+//                 slug: value.toLowerCase(),
+//                 description: "",
+//                 menu_order: 0,
+//                 count: 0
+//             }))
+//         };
+
+//         try {
+//             // Create the attribute in WooCommerce
+//             const attributeResponse = await WooCommerceAPI.post("products/attributes", {
+//                 name: attr.name,
+//                 slug: attr.name.toLowerCase(),
+//                 type: "select",
+//                 order_by: "menu_order",
+//                 has_archives: true,
+//                 is_variation: attr.variation
+//             });
+
+//             console.log('Attribute Creation Response:', attributeResponse.data);
+
+//             if (attributeResponse.data && attributeResponse.data.id) {
+//                 const woo_id = attributeResponse.data.id;
+
+//                 // Update MongoDB collection with woo_id
+//                 await attributes.updateOne(
+//                     { _id: attr._id },
+//                     { $set: { woo_id: woo_id } }
+//                 );
+
+//                 // Now, let's add terms to the created attribute
+//                 for (const term of itemData.terms) {
+//                     await WooCommerceAPI.post(`products/attributes/${woo_id}/terms`, term);
+//                 }
+
+//                 sendMessage(ws, `Added attribute ${attr.name} and its terms to WooCommerce.`);
+//             } else {
+//                 console.log(`Unexpected WooCommerce response structure for attribute ${attr.name}.`);
+//             }
+
+//         } catch (err) {
+//             console.log(`Error pushing attribute ${attr.name}:`, err);
+//         }
+//     }
+// }
+
+// Function to fetch all results from WooCommerce with pagination
+async function fetchAllFromWooCommerce(endpoint, WooCommerceAPI) {
+    let page = 1;
+    let results = [];
+    while (true) {
+        const response = await WooCommerceAPI.get(endpoint, { params: { per_page: 100, page } });
+        results = results.concat(response.data);
+        if (response.data.length < 100) break; // Less than 100 results means it's the last page
+        page++;
+    }
+    return results;
+}
+
+async function addOrUpdateGlobalAttributes(ws, destinationURL) {
+    await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+    const attributes = mongoose.connection.collection('product_attributes');
+    const allAttributes = await attributes.find({}).toArray();
+
+    const WooCommerceAPI = new WooCommerce({
+        url: destinationURL,
+        consumerKey: process.env.WC_CONSUMER_KEY,
+        consumerSecret: process.env.WC_CONSUMER_SECRET,
+        wpAPI: true,
+        version: 'wc/v3',
+        queryStringAuth: true
+    });
+
+    const existingAttributes = await fetchAllFromWooCommerce("products/attributes", WooCommerceAPI);
+
+
+    for (const attr of allAttributes) {
+        // const existingAttribute = existingAttributes.data.find(a => a.slug === attr.name.toLowerCase());
+        const existingAttribute = existingAttributes.find(a => a.slug === attr.name.toLowerCase());
+
+
+        if (existingAttribute) {
+            try {
+                // If attribute exists, update it (if necessary)
+                await WooCommerceAPI.put(`products/attributes/${existingAttribute.id}`, {
+                    name: attr.name,
+                    slug: attr.name.toLowerCase(),
+                    type: "select",
+                    order_by: "menu_order",
+                    has_archives: true,
+                    is_variation: attr.variation
+                });
+            } catch (err) {
+                console.error(`Error updating attribute: ${err.message}`);
+                continue; // Skip the current loop iteration
+            }
+
+            // When fetching terms for an attribute:
+            const existingTerms = await fetchAllFromWooCommerce(`products/attributes/${existingAttribute.id}/terms`, WooCommerceAPI);
+
+            for (const term of attr.values) {
+                const existingTerm = existingTerms.find(t => t.slug === term.toLowerCase());
+
+                try {
+                    if (existingTerm) {
+                        // If term exists, update it (if necessary)
+                        await WooCommerceAPI.put(`products/attributes/${existingAttribute.id}/terms/${existingTerm.id}`, {
+                            name: term,
+                            slug: term.toLowerCase()
+                        });
+                    } else {
+                        // If term doesn't exist, create it
+                        await WooCommerceAPI.post(`products/attributes/${existingAttribute.id}/terms`, {
+                            name: term,
+                            slug: term.toLowerCase()
+                        });
+                    }
+                } catch (err) {
+                    console.error(`Error handling term "${term}": ${err.message}`);
+                }
+
+
+            }
+
+            // Delete any terms in WooCommerce that don't exist in the database
+            for (const existingTerm of existingTerms) {
+                if (!attr.values.includes(existingTerm.name)) {
+                    try {
+                        await WooCommerceAPI.delete(`products/attributes/${existingAttribute.id}/terms/${existingTerm.id}`);
+                    } catch (err) {
+                        console.error(`Error deleting term "${existingTerm.name}": ${err.message}`);
+                    }
+                }
+            }
+
+        } else {
+            try {
+                // If attribute doesn't exist, create it and its terms
+                const attributeResponse = await WooCommerceAPI.post("products/attributes", {
+                    name: attr.name,
+                    slug: attr.name.toLowerCase(),
+                    type: "select",
+                    order_by: "menu_order",
+                    has_archives: true,
+                    is_variation: attr.variation
+                });
+
+                if (attributeResponse.data && attributeResponse.data.id) {
+                    for (const term of attr.values) {
+                        await WooCommerceAPI.post(`products/attributes/${attributeResponse.data.id}/terms`, {
+                            name: term,
+                            slug: term.toLowerCase()
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error(`Error creating attribute "${attr.name}": ${err.message}`);
+
+            }
+
+        }
+    }
+
+    // Delete any attributes in WooCommerce that don't exist in the database
+    for (const existingAttribute of existingAttributes) {
+        if (!allAttributes.some(attr => attr.name.toLowerCase() === existingAttribute.slug)) {
+            try {
+                await WooCommerceAPI.delete(`products/attributes/${existingAttribute.id}`);
+            } catch (err) {
+                console.error(`Error deleting attribute "${existingAttribute.slug}": ${err.message}`);
+
+            }
+        }
+    }
+
+    mongoose.connection.close();
+}
+
+
+
 
 
 
@@ -311,12 +558,20 @@ async function processBuilder(ws) {
         await sleep(delayTimeout);
         sendMessage(ws, "Fetching products from CSV...")
         await sleep(delayTimeout);
-        // await convertCSVToMongo(ws); // WORKS
+        await convertCSVToMongo(ws); // WORKS
 
-        const filter = { "SKU": "TUB-1-1-1" }
-        const getData = await getDataFromDatabase(ws, filter)
+        // const filter = { "SKU": "TUB-1-1-1" }
+        // const getData = await getDataFromDatabase(ws, filter)
+        await sleep(delayTimeout);
+        sendMessage(ws, "Extracting attributes to new collection")
+        await extractAttributes(ws)
+
+        await sleep(delayTimeout)
+        sendMessage(ws, "Adding global attributes to WooCommerce")
+        await addOrUpdateGlobalAttributes(ws, destinationURL)
         // console.log(getData)
-        sendMessage(ws, getData)
+        // sendMessage(ws, getData)
+        sendMessage(ws, "Process completed...")
     } catch (err) {
         console.log('Error:', err);
     }
