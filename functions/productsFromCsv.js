@@ -222,6 +222,8 @@ function sleep(ms) {
 async function convertCSVToMongo(ws) {
     const csvFilePath = './csv_data/tubular-data-updated.csv';
 
+
+
     try {
         await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
 
@@ -855,6 +857,7 @@ function mapProductToWooFormat(product, allAttributes) {
             if (product[attribute.name]) {
                 acc.push({
                     id: attribute.woo_id,
+                    variation: attribute.variation,
                     option: product[attribute.name].map(item => item.values).flat()
                 });
             }
@@ -890,6 +893,199 @@ function mapProductToWooFormat(product, allAttributes) {
         variations: []
     };
 }
+
+
+async function pushProductsToWooCommerce(ws, mappedProducts) {
+    try {
+        // Separate variable products and variations
+        const variableProducts = mappedProducts.filter(p => p.type === "variable");
+        const variations = mappedProducts.filter(p => p.type === "variation");
+
+        // Prepare data for parent variable products
+        const parentProductsData = variableProducts.map(product => {
+            return {
+                name: product.name,
+                slug: product.slug,
+                type: product.type,
+                status: product.status,
+                description: product.description,
+                sku: product.sku,
+                price: product.price,
+                regular_price: product.regular_price,
+                attributes: product.attributes.map(attr => ({
+                    id: attr.id,
+                    name: attr.name,
+                    visible: true,
+                    variation: attr.variation,
+                    options: attr.option
+                })),
+                downloads: product.downloads,
+                images: product.images
+            };
+        });
+
+        console.log("Preparing to upload parent products...");
+        sendMessage(ws, "Preparing to upload parent products...")
+
+        // Split the parent products data into chunks of 100
+        const parentProductsChunks = chunkArray(parentProductsData, 100);
+
+        let createdParentSkus = [];
+        let createdParentIds = [];
+        for (const chunk of parentProductsChunks) {
+            const response = await WooCommerceAPI.post("products/batch", { create: chunk });
+            createdParentIds = createdParentIds.concat(response.data.create.map(p => p.id));
+            createdParentSkus = createdParentSkus.concat(response.data.create.map(p => p.sku));
+
+            sendMessage(ws, `Batch of ${chunk.length} parent products processed`);
+        }
+
+        console.log(`Successfully uploaded ${createdParentIds.length} parent products.`);
+        sendMessage(ws, `Successfully uploaded ${createdParentIds.length} parent products.`)
+
+        // Prepare data for variations
+        const variationsData = [];
+        createdParentSkus.forEach((parentSku, index) => {
+            const parentId = createdParentIds[index];
+            const childVariations = variations.filter(v => v.sku.startsWith(parentSku));
+
+            const variationData = childVariations.map(variation => {
+                return {
+                    regular_price: variation.regular_price,
+                    attributes: variation.attributes.map(attr => ({
+                        id: attr.id,
+                        name: attr.name,
+                        option: attr.option[0]
+                    })),
+                    downloadable: variation.downloadable,
+                    downloads: variation.downloads.map(download => ({
+                        name: download.name,
+                        file: download.file
+                    })),
+                    sku: variation.sku,
+                    height: variation.height,
+                    width: variation.width,
+                    length: variation.length,
+                    description: variation.description,
+                };
+            });
+            variationsData.push({ parentId: parentId, data: variationData });
+        });
+
+        console.log("Preparing to upload variations...");
+        sendMessage(ws, "Preparing to upload variations...")
+
+        let totalVariationsUploaded = 0;
+        // Split the variations data into chunks of 100
+        for (let variationBatch of variationsData) {
+            const variationChunks = chunkArray(variationBatch.data, 100);
+            for (const chunk of variationChunks) {
+                await WooCommerceAPI.post(`products/${variationBatch.parentId}/variations/batch`, { create: chunk });
+                totalVariationsUploaded += chunk.length;
+                sendMessage(ws, `Batch of ${chunk.length} variations processed`);
+
+            }
+        }
+
+        console.log(`Successfully uploaded ${totalVariationsUploaded} variations.`);
+        sendMessage(ws, `Successfully uploaded ${totalVariationsUploaded} variations.`)
+
+        console.log("Successfully pushed products and their variations to WooCommerce!");
+        sendMessage(ws, "Successfully pushed products and their variations to WooCommerce!")
+
+    } catch (error) {
+        console.log("Error pushing products to WooCommerce:", error);
+        sendMessage(ws, `Error pushing products to WooCommerce: ${error}`)
+    }
+}
+
+
+
+// Utility function to split an array into chunks
+function chunkArray(array, chunkSize) {
+    const limitedArray = array.slice(0, 100);
+    const chunks = [];
+    for (let i = 0; i < limitedArray.length; i += chunkSize) {
+        chunks.push(limitedArray.slice(i, i + chunkSize));
+    }
+    return chunks;
+}
+// Utility function to split an array into chunks
+function chunkArray(array, chunkSize, maxItems = array.length) {
+    const chunks = [];
+    let processedItems = 0;  // Count of items processed
+
+    for (let i = 0; i < array.length && processedItems < maxItems; i += chunkSize) {
+        let chunk = array.slice(i, i + chunkSize);
+
+        // If adding the whole chunk exceeds maxItems, slice the chunk
+        if (processedItems + chunk.length > maxItems) {
+            chunk = chunk.slice(0, maxItems - processedItems);
+        }
+
+        chunks.push(chunk);
+        processedItems += chunk.length;
+    }
+
+    return chunks;
+}
+
+
+
+
+// Run the Process
+async function processBuilder(ws) {
+    const startTime = Date.now();
+    ws.send("startTimer");
+
+    try {
+        // WORKS
+        await sleep(delayTimeout);
+        sendMessage(ws, "Fetching products from CSV...")
+        await sleep(delayTimeout);
+        await convertCSVToMongo(ws);
+
+        await sleep(delayTimeout);
+        sendMessage(ws, "Extracting attributes to new collection")
+        await extractAttributes(ws)
+
+        await sleep(delayTimeout)
+        sendMessage(ws, "Adding global attributes to WooCommerce")
+        await addOrUpdateGlobalAttributes(ws, destinationURL, WooCommerceAPI)
+        // WORKS
+
+        await sleep(delayTimeout);
+        sendMessage(ws, "Mapping products for WooCommerce...");
+        const mappedProducts = await mapProductsForWooCommerce(ws);
+
+        await sleep(delayTimeout);
+        sendMessage(ws, "Pushing Mapped Products to WooCommerce");
+        await pushProductsToWooCommerce(ws, mappedProducts);
+
+        sendMessage(ws, "Process completed...")
+    } catch (err) {
+        console.log('Error:', err);
+    }
+
+    const endTime = Date.now();
+    const elapsedTime = (endTime - startTime);
+
+    const hours = Math.floor(elapsedTime / 3600000);
+    const minutes = Math.floor((elapsedTime - (hours * 3600000)) / 60000);
+    const seconds = Math.floor((elapsedTime - (hours * 3600000) - (minutes * 60000)) / 1000);
+
+    sendMessage(ws, `Elapsed time: ${hours} hours, ${minutes} minutes, ${seconds} seconds`);
+
+    // Stop the timer on client side
+    ws.send("stopTimer");
+}
+
+
+module.exports = { processBuilder };
+
+
+// ::REFERENCE MATERIAL / GARBAGE COLLECTION::
+
 
 // async function pushProductsToWooCommerce(mappedProducts) {
 //     try {
@@ -1156,112 +1352,6 @@ function mapProductToWooFormat(product, allAttributes) {
 //     }
 // }
 
-async function pushProductsToWooCommerce(ws, mappedProducts) {
-    try {
-        // Separate variable products and variations
-        const variableProducts = mappedProducts.filter(p => p.type === "variable");
-        const variations = mappedProducts.filter(p => p.type === "variation");
-
-        // Prepare data for parent variable products
-        const parentProductsData = variableProducts.map(product => {
-            return {
-                name: product.name,
-                slug: product.slug,
-                type: product.type,
-                status: product.status,
-                description: product.description,
-                sku: product.sku,
-                price: product.price,
-                regular_price: product.regular_price,
-                attributes: product.attributes.map(attr => ({
-                    id: attr.id,
-                    name: attr.name,
-                    visible: true,
-                    variation: true,
-                    options: attr.option  // Note: we're assigning the whole options array here
-                })),
-                downloads: product.downloads,
-                images: product.images
-            };
-        });
-
-        console.log("Preparing to upload parent products...");
-        sendMessage(ws, "Preparing to upload parent products...")
-
-        // Split the parent products data into chunks of 100
-        const parentProductsChunks = chunkArray(parentProductsData, 100);
-
-        let createdParentSkus = [];
-        let createdParentIds = [];
-        for (const chunk of parentProductsChunks) {
-            const response = await WooCommerceAPI.post("products/batch", { create: chunk });
-            createdParentIds = createdParentIds.concat(response.data.create.map(p => p.id));
-            createdParentSkus = createdParentSkus.concat(response.data.create.map(p => p.sku));
-
-            sendMessage(ws, `Batch of ${chunk.length} parent products processed`);
-        }
-
-        console.log(`Successfully uploaded ${createdParentIds.length} parent products.`);
-        sendMessage(ws, `Successfully uploaded ${createdParentIds.length} parent products.`)
-
-        // Prepare data for variations
-        const variationsData = [];
-        createdParentSkus.forEach((parentSku, index) => {
-            const parentId = createdParentIds[index];
-            const childVariations = variations.filter(v => v.sku.startsWith(parentSku));
-
-            const variationData = childVariations.map(variation => {
-                return {
-                    regular_price: variation.regular_price,
-                    attributes: variation.attributes.map(attr => ({
-                        id: attr.id,
-                        name: attr.name,
-                        option: attr.option[0]  // Note: we're taking the first option only, assuming one option per variation attribute
-                    })),
-                    sku: variation.sku
-                };
-            });
-            variationsData.push({ parentId: parentId, data: variationData });
-        });
-
-        console.log("Preparing to upload variations...");
-        sendMessage(ws, "Preparing to upload variations...")
-
-        let totalVariationsUploaded = 0;
-        // Split the variations data into chunks of 100
-        for (let variationBatch of variationsData) {
-            const variationChunks = chunkArray(variationBatch.data, 100);
-            for (const chunk of variationChunks) {
-                await WooCommerceAPI.post(`products/${variationBatch.parentId}/variations/batch`, { create: chunk });
-                totalVariationsUploaded += chunk.length;
-                sendMessage(ws, `Batch of ${chunk.length} variations processed`);
-
-            }
-        }
-
-        console.log(`Successfully uploaded ${totalVariationsUploaded} variations.`);
-        sendMessage(ws, `Successfully uploaded ${totalVariationsUploaded} variations.`)
-
-        console.log("Successfully pushed products and their variations to WooCommerce!");
-        sendMessage(ws, "Successfully pushed products and their variations to WooCommerce!")
-
-    } catch (error) {
-        console.log("Error pushing products to WooCommerce:", error);
-        sendMessage(ws, `Error pushing products to WooCommerce: ${error}`)
-    }
-}
-
-
-
-// Utility function to split an array into chunks
-function chunkArray(array, chunkSize) {
-    const chunks = [];
-    for (let i = 0; i < array.length; i += chunkSize) {
-        chunks.push(array.slice(i, i + chunkSize));
-    }
-    return chunks;
-}
-
 // Add global products attributes and terms to WooCommerce
 
 // async function addGlobalAttributes(ws, destinationURL) {
@@ -1488,63 +1578,6 @@ async function mapAttributesToWooIds(product, attributesCollection) {
 
 //     return mappedAttributes;
 // }
-
-
-
-// Run the Process
-async function processBuilder(ws) {
-    const startTime = Date.now();
-    ws.send("startTimer");
-
-    try {
-        // WORKS
-        // await sleep(delayTimeout);
-        // sendMessage(ws, "Fetching products from CSV...")
-        // await sleep(delayTimeout);
-        // await convertCSVToMongo(ws);
-
-        // await sleep(delayTimeout);
-        // sendMessage(ws, "Extracting attributes to new collection")
-        // await extractAttributes(ws)
-
-        // await sleep(delayTimeout)
-        // sendMessage(ws, "Adding global attributes to WooCommerce")
-        // await addOrUpdateGlobalAttributes(ws, destinationURL, WooCommerceAPI)
-        // WORKS
-
-        await sleep(delayTimeout);
-        sendMessage(ws, "Mapping products for WooCommerce...");
-        const mappedProducts = await mapProductsForWooCommerce(ws);
-
-        // addOrUpdateProducts()
-        await pushProductsToWooCommerce(ws, mappedProducts);
-
-        // console.log(getData)
-        // sendMessage(ws, getData)
-        sendMessage(ws, "Process completed...")
-    } catch (err) {
-        console.log('Error:', err);
-    }
-
-    const endTime = Date.now();
-    const elapsedTime = (endTime - startTime);
-
-    const hours = Math.floor(elapsedTime / 3600000);
-    const minutes = Math.floor((elapsedTime - (hours * 3600000)) / 60000);
-    const seconds = Math.floor((elapsedTime - (hours * 3600000) - (minutes * 60000)) / 1000);
-
-    sendMessage(ws, `Elapsed time: ${hours} hours, ${minutes} minutes, ${seconds} seconds`);
-
-    // Stop the timer on client side
-    ws.send("stopTimer");
-}
-
-
-module.exports = { processBuilder };
-
-
-// ::REFERENCE MATERIAL::
-
 
 // async function fetchFromApi(url) {
 //     const username = process.env.WP_USERNAME;
