@@ -863,14 +863,24 @@ function mapProductToWooFormat(product, allAttributes) {
             }
             return acc;
         }, []),
-        downloadable: product["Datasheet"] ? true : false,
-        downloads: product["Datasheet"] ? [{
-            name: "Downloadable File",
-            file: product["Datasheet"].toString()
-        }] : [],
+        downloadable: product["Datasheet"] || product["Instruction Manual"] || product["Photometry"] || product["CAD Drawings"] ? true : false,
+        downloads: [
+            ...product["Datasheet"] ? [{ name: "Datasheet", file: product["Datasheet"].toString() }] : [],
+            ...product["Instruction Manual"] ? [{ name: "Instruction Manual", file: product["Instruction Manual"].toString() }] : [],
+            ...product["Photometry"] ? [{ name: "Photometry", file: product["Photometry"].toString() }] : [],
+            ...product["CAD Drawings"] ? [{ name: "CAD Drawings", file: product["CAD Drawings"].toString() }] : []
+        ],
+
         images: product["Image URL"].map((url, index) => ({
             src: url,
-            name: `Image ${index + 1}`
+            name: url.split('/').pop()
+        })),
+        categories: product["Category"].map(categoryName => ({
+            name: categoryName
+        })),
+
+        tags: product["Tags"].map(tagName => ({
+            name: tagName
         })),
         meta_data: [
             {
@@ -897,6 +907,38 @@ function mapProductToWooFormat(product, allAttributes) {
 
 async function pushProductsToWooCommerce(ws, mappedProducts) {
     try {
+        const mediaResponse = await fetch(`${process.env.WP_DESTINATION_URL}/wp-json/wp/v2/media`);
+        const media = await mediaResponse.json();
+
+        // Helper function to check if an image already exists in the WooCommerce media library
+        const getImageId = (imageUrl) => {
+            if (!imageUrl) return null;  // Check if imageUrl exists
+            const imageFilename = imageUrl.split('/').pop();
+            const existingMedia = media.find(m => m.source_url.endsWith(imageFilename));
+            return existingMedia ? existingMedia.id : null;
+        };
+
+        const getVariationImageId = (imageName) => {
+            const existingMedia = media.find(m => m.title.rendered === imageName);
+            return existingMedia ? existingMedia.id : null;
+        };
+
+        // Modify mappedProducts to use existing image ID if available
+        mappedProducts.forEach(product => {
+            if (product.images && product.images.length > 0) {  // Check if images array exists and is not empty
+                product.images.forEach(image => {
+                    if (image.src) {  // Check if src property exists
+                        const existingImageId = getImageId(image.src);
+                        if (existingImageId) {
+                            image.id = existingImageId;
+                            delete image.src; // remove src key if image ID is present
+                        }
+                    }
+                });
+            }
+        });
+
+
         // Separate variable products and variations
         const variableProducts = mappedProducts.filter(p => p.type === "variable");
         const variations = mappedProducts.filter(p => p.type === "variation");
@@ -920,7 +962,9 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
                     options: attr.option
                 })),
                 downloads: product.downloads,
-                images: product.images
+                images: product.images,
+                categories: product.categories,
+                tags: product.tags,
             };
         });
 
@@ -950,6 +994,11 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
             const childVariations = variations.filter(v => v.sku.startsWith(parentSku));
 
             const variationData = childVariations.map(variation => {
+                const variationImage = variation.images && variation.images[0]; // Assuming each variation has at most one image
+                // const variationImageId = variationImage ? getImageId(variationImage.src) : null;
+                const variationImageId = variationImage ? getVariationImageId(variationImage.name) : null;
+
+
                 return {
                     regular_price: variation.regular_price,
                     attributes: variation.attributes.map(attr => ({
@@ -967,6 +1016,7 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
                     width: variation.width,
                     length: variation.length,
                     description: variation.description,
+                    image: variationImageId ? { id: variationImageId } : { src: variationImage.src },  // Setting variation image
                 };
             });
             variationsData.push({ parentId: parentId, data: variationData });
