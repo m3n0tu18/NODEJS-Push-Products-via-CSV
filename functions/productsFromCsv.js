@@ -1174,10 +1174,11 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
                 price: product.price,
                 regular_price: product.regular_price,
                 attributes: product.attributes.map(attr => ({
+                    id: attr.id,
                     name: attr.name,
                     visible: true,
                     variation: true,
-                    options: [attr.option]
+                    options: attr.option  // Note: we're assigning the whole options array here
                 })),
                 downloads: product.downloads,
                 images: product.images
@@ -1196,6 +1197,8 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
             const response = await WooCommerceAPI.post("products/batch", { create: chunk });
             createdParentIds = createdParentIds.concat(response.data.create.map(p => p.id));
             createdParentSkus = createdParentSkus.concat(response.data.create.map(p => p.sku));
+
+            sendMessage(ws, `Batch of ${chunk.length} parent products processed`);
         }
 
         console.log(`Successfully uploaded ${createdParentIds.length} parent products.`);
@@ -1211,8 +1214,9 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
                 return {
                     regular_price: variation.regular_price,
                     attributes: variation.attributes.map(attr => ({
+                        id: attr.id,
                         name: attr.name,
-                        option: attr.option
+                        option: attr.option[0]  // Note: we're taking the first option only, assuming one option per variation attribute
                     })),
                     sku: variation.sku
                 };
@@ -1230,6 +1234,8 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
             for (const chunk of variationChunks) {
                 await WooCommerceAPI.post(`products/${variationBatch.parentId}/variations/batch`, { create: chunk });
                 totalVariationsUploaded += chunk.length;
+                sendMessage(ws, `Batch of ${chunk.length} variations processed`);
+
             }
         }
 
