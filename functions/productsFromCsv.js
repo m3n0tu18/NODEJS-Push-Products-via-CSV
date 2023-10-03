@@ -652,37 +652,76 @@ async function mapProductToWooFormat(product, allAttributes, categoriesCollectio
 
 
 
+// async function saveCategoriesToWooCommerce() {
+//     // 1. Connect to MongoDB and fetch csvProductData
+
+//     // Connect to MongoDB
+//     await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+
+//     const csvProductData = mongoose.connection.collection('csvProductData');
+//     const allCategories = await csvProductData.find({}).toArray();
+
+//     // const client = await MongoClient.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true });
+//     // const db = client.db('YOUR_DB_NAME');
+//     // const csvProductData = await db.collection('csvProductData').find({}).toArray();
+
+//     // 2. Extract unique categories
+//     const uniqueCategories = [...new Set(allCategories.flatMap(product => product.Category))];
+
+//     // 3. Save unique categories to product_categories collection
+//     const categoriesToInsert = uniqueCategories.map(category => ({ name: category }));
+//     await mongoose.connection.collection('product_categories').insertMany(categoriesToInsert);
+
+//     // 4. POST categories to WooCommerce and get woo_id
+//     for (let category of categoriesToInsert) {
+//         const response = await WooCommerceAPI.post('products/categories', { name: category.name });
+//         const woo_id = response.data.id;
+
+//         // 5. Update product_categories collection with woo_id
+//         await mongoose.connection.collection('product_categories').updateOne({ name: category.name }, { $set: { woo_id: woo_id } });
+//     }
+
+//     mongoose.connection.close();
+// }
 async function saveCategoriesToWooCommerce() {
-    // 1. Connect to MongoDB and fetch csvProductData
+    try {
+        // 1. Connect to MongoDB and fetch csvProductData
+        await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
 
-    // Connect to MongoDB
-    await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+        const csvProductData = mongoose.connection.collection('csvProductData');
+        const allCategories = await csvProductData.find({}).toArray();
 
-    const csvProductData = mongoose.connection.collection('csvProductData');
-    const allCategories = await csvProductData.find({}).toArray();
+        // 2. Extract unique categories
+        const uniqueCategories = [...new Set(allCategories.flatMap(product => product.Category))];
 
-    // const client = await MongoClient.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true });
-    // const db = client.db('YOUR_DB_NAME');
-    // const csvProductData = await db.collection('csvProductData').find({}).toArray();
+        // 3. Save unique categories to product_categories collection
+        const categoriesToInsert = uniqueCategories.map(category => ({ name: category }));
+        await mongoose.connection.collection('product_categories').insertMany(categoriesToInsert);
 
-    // 2. Extract unique categories
-    const uniqueCategories = [...new Set(allCategories.flatMap(product => product.Category))];
+        // Fetch existing categories from WooCommerce
+        const existingWooCategoriesResponse = await WooCommerceAPI.get('products/categories');
+        const existingWooCategories = existingWooCategoriesResponse.data;
 
-    // 3. Save unique categories to product_categories collection
-    const categoriesToInsert = uniqueCategories.map(category => ({ name: category }));
-    await mongoose.connection.collection('product_categories').insertMany(categoriesToInsert);
+        // 4. POST categories to WooCommerce and get woo_id
+        for (let category of categoriesToInsert) {
+            // Check if the category already exists in WooCommerce
+            const existingCategory = existingWooCategories.find(wooCategory => wooCategory.name === category.name);
 
-    // 4. POST categories to WooCommerce and get woo_id
-    for (let category of categoriesToInsert) {
-        const response = await WooCommerceAPI.post('products/categories', { name: category.name });
-        const woo_id = response.data.id;
+            if (!existingCategory) {
+                const response = await WooCommerceAPI.post('products/categories', { name: category.name });
+                const woo_id = response.data.id;
 
-        // 5. Update product_categories collection with woo_id
-        await mongoose.connection.collection('product_categories').updateOne({ name: category.name }, { $set: { woo_id: woo_id } });
+                // 5. Update product_categories collection with woo_id
+                await mongoose.connection.collection('product_categories').updateOne({ name: category.name }, { $set: { woo_id: woo_id } });
+            }
+        }
+
+        mongoose.connection.close();
+    } catch (error) {
+        console.error("Error saving categories to WooCommerce:", error);
     }
-
-    mongoose.connection.close();
 }
+
 
 // Pushes Product from MongoDB to WooCommerce
 async function pushProductsToWooCommerce(ws, mappedProducts) {
