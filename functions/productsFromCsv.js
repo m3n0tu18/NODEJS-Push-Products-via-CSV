@@ -558,7 +558,17 @@ async function mapProductsForWooCommerce(ws) {
         }
 
         const MappedProduct = mongoose.model('MappedProduct', productSchema, 'mappedProducts');
-        await MappedProduct.insertMany(finalMappedProducts);
+        // await MappedProduct.insertMany(finalMappedProducts);
+
+        const bulkOps = finalMappedProducts.map(product => ({
+            updateOne: {
+                filter: { sku: product.sku },
+                update: { $set: product },
+                upsert: true
+            }
+        }));
+
+        await MappedProduct.bulkWrite(bulkOps);
 
         mongoose.connection.close();
 
@@ -575,7 +585,6 @@ async function mapProductsForWooCommerce(ws) {
         mongoose.connection.close();
     }
 }
-
 
 async function mapProductToWooFormat(product, allAttributes, categoriesCollection) {
 
@@ -722,12 +731,75 @@ async function saveCategoriesToWooCommerce() {
     }
 }
 
+async function fetchExistingParentSKUs(WooCommerceAPI) {
+    let allSKUs = [];
+    let page = 1;
+
+    while (true) {
+        try {
+            // Fetch products in batches of 100 (or whatever limit you prefer)
+            const response = await WooCommerceAPI.get(`products?per_page=100&page=${page}&fields=sku`);
+            const products = response.data;
+
+            if (products.length === 0) {
+                break; // Exit loop if no more products
+            }
+
+            // Collect SKUs from the current batch
+            const skus = products.map(product => product.sku);
+            allSKUs = allSKUs.concat(skus);
+
+            page++;
+        } catch (error) {
+            console.error(`Error fetching SKUs on page ${page}:`, error);
+            break;
+        }
+    }
+
+    return allSKUs;
+}
+
+async function fetchExistingVariationSKUs(WooCommerceAPI, parentId) {
+    const response = await WooCommerceAPI.get(`products/${parentId}/variations`);
+    return response.data.map(variation => variation.sku);
+}
+
+
+
+const loopThroughWooProducts = async (sku) => {
+    const response = await WooCommerceAPI.get(`products`, { sku: sku });
+    // console.log('Getting Info from SKU:', response.data);
+    // console.log(`The SKU for the parent product ${response.data.id} is: ${response.data.sku}`);
+    return response.data.length ? response.data[0].id : null;
+}
+
+const getParentIdBySku = async (sku) => {
+    // console.log('The SKU for the parent product is:', sku);
+
+    const response = await WooCommerceAPI.get(`products`, { sku: sku });
+    // console.log(`Getting Info from SKU ${sku}:`, response.data);
+    return response.data.length ? response.data[0].id : null;
+};
 
 // Pushes Product from MongoDB to WooCommerce
 async function pushProductsToWooCommerce(ws, mappedProducts) {
     try {
         const mediaResponse = await fetch(`${process.env.WP_DESTINATION_URL}/wp-json/wp/v2/media`);
         const media = await mediaResponse.json();
+
+        const existingParentSKUs = await fetchExistingParentSKUs(WooCommerceAPI);
+        // const existingVariationSKUs = await fetchExistingVariationSKUs(WooCommerceAPI);
+
+        let parentIdToSku = {};
+
+        let batchUpdate = {
+            create: [],
+            update: []
+        };
+
+        let updatedParentIds = [];
+        // Initialize the arrays before using them
+        let createdParentIds = [];
 
         // Helper function to check if an image already exists in the WooCommerce media library
         const getImageId = (imageUrl) => {
@@ -737,12 +809,13 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
             return existingMedia ? existingMedia.id : null;
         };
 
+        // Gets the variation image ID and attaches it to the existingMedia array
         const getVariationImageId = (imageName) => {
             const existingMedia = media.find(m => m.title.rendered === imageName);
             return existingMedia ? existingMedia.id : null;
         };
 
-        // Modify mappedProducts to use existing image ID if available
+        // Loop through each product and its variations to check if the images already exist in the media library
         mappedProducts.forEach(product => {
             if (product.images && product.images.length > 0) {  // Check if images array exists and is not empty
                 product.images.forEach(image => {
@@ -758,20 +831,12 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
         });
 
 
-        // Separate variable products and variations
+        // Separate variable products and variations based of the MongoDB Database
         const variableProducts = mappedProducts.filter(p => p.type === "variable");
-
-
-        // console.log(variableProducts[0].categories)
-        // return
-
         const variations = mappedProducts.filter(p => p.type === "variation");
 
-        // Prepare data for parent variable products
+        // Map the variable products data to the WooCommerce schema
         const parentProductsData = variableProducts.map(product => {
-
-            console.log(product.categories);
-
             return {
                 name: product.name,
                 slug: product.slug,
@@ -790,10 +855,6 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
                 })),
                 downloads: product.downloads,
                 images: product.images,
-                // categories: product.categories.map(category => ({
-                //     name: category.name
-                // })),
-
                 categories: product.categories,
                 tags: product.tags,
             };
@@ -802,34 +863,77 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
         console.log("Preparing to upload parent products...");
         sendMessage(ws, "Preparing to upload parent products...")
 
-        // Split the parent products data into chunks of 100
-        const parentProductsChunks = chunkArray(parentProductsData, 100);
 
-        let createdParentSkus = [];
-        let createdParentIds = [];
-        for (const chunk of parentProductsChunks) {
-            const response = await WooCommerceAPI.post("products/batch", { create: chunk });
-            createdParentIds = createdParentIds.concat(response.data.create.map(p => p.id));
-            createdParentSkus = createdParentSkus.concat(response.data.create.map(p => p.sku));
-
-            sendMessage(ws, `Batch of ${chunk.length} parent products processed`);
+        // Loop through parent products data to populate batchUpdate and updatedParentIds
+        for (const product of parentProductsData) {
+            if (!product.sku) {
+                console.log("Missing SKU for product:", product);
+                continue;
+            }
+            const invalidParents = parentProductsData.filter(product => !product.sku);
+            if (invalidParents.length > 0) {
+                console.log("These parent products are missing SKUs:", invalidParents);
+                // Optionally, remove them from parentProductsData
+            }
+            if (existingParentSKUs.includes(product.sku)) {
+                const wcId = await getParentIdBySku(product.sku);
+                if (wcId) {
+                    product.id = wcId;
+                    batchUpdate.update.push(product);
+                    updatedParentIds.push(wcId);  // Populate updatedParentIds
+                    parentIdToSku[wcId] = product.sku;  // Add to mapping
+                } else {
+                    console.log(`Invalid ID for SKU ${product.sku}`);
+                }
+            } else {
+                batchUpdate.create.push(product);
+                // Consider populating createdParentIds if needed
+            }
         }
 
-        console.log(`Successfully uploaded ${createdParentIds.length} parent products.`);
-        sendMessage(ws, `Successfully uploaded ${createdParentIds.length} parent products.`)
+        // Chunk parent products for create and update
+        const createParentChunks = chunkArray(batchUpdate.create, 100);
+        const updateParentChunks = chunkArray(batchUpdate.update, 100);
+
+        for (const createChunk of createParentChunks) {
+            const response = await WooCommerceAPI.post("products/batch", { create: createChunk });
+            createdParentIds = createdParentIds.concat(response.data.create.map(p => p.id));
+            response.data.create.forEach(p => {
+                parentIdToSku[p.id] = p.sku;
+            });
+            sendMessage(ws, `Batch of ${createChunk.length} parent products created`);
+        }
+
+        for (const updateChunk of updateParentChunks) {
+            await WooCommerceAPI.post("products/batch", { update: updateChunk });
+            sendMessage(ws, `Batch of ${updateChunk.length} parent products updated`);
+        }
+
+
+        // Fetch existing variation SKUs for each parent ID
+        let existingVariationSKUs = [];
+        for (const parentId of updatedParentIds.concat(createdParentIds)) {  // Assuming updatedParentIds and createdParentIds are arrays of parent IDs
+            const skus = await fetchExistingVariationSKUs(WooCommerceAPI, parentId);
+            existingVariationSKUs = existingVariationSKUs.concat(skus);
+        }
 
         // Prepare data for variations
-        const variationsData = [];
-        createdParentSkus.forEach((parentSku, index) => {
-            const parentId = createdParentIds[index];
+        const variationsData = [];  // This will hold the data for each variation
+        for (const parentId of updatedParentIds.concat(createdParentIds)) {
+
+            const parentSku = parentIdToSku[parentId];  // Look up SKU from mapping
+            if (!parentSku) {
+                console.log(`Missing SKU for parent ID: ${parentId}`);
+                continue;  // Skip this parentId for variations
+            }
+            // Filter variations related to the current parent
             const childVariations = variations.filter(v => v.sku.startsWith(parentSku));
 
             const variationData = childVariations.map(variation => {
-                const variationImage = variation.images && variation.images[0]; // Assuming each variation has at most one image
-                // const variationImageId = variationImage ? getImageId(variationImage.src) : null;
+                const variationImage = variation.images && variation.images[0];
                 const variationImageId = variationImage ? getVariationImageId(variationImage.name) : null;
 
-
+                // console.log("Variation Attributes:", variation.attributes);
                 return {
                     regular_price: variation.regular_price,
                     attributes: variation.attributes.map(attr => ({
@@ -847,29 +951,34 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
                     width: variation.width,
                     length: variation.length,
                     description: variation.description,
-                    image: variationImageId ? { id: variationImageId } : { src: variationImage.src },  // Setting variation image
+                    image: variationImageId ? { id: variationImageId } : { src: variationImage.src },
                 };
             });
-            variationsData.push({ parentId: parentId, data: variationData });
-        });
 
-        console.log("Preparing to upload variations...");
-        sendMessage(ws, "Preparing to upload variations...")
+            // Add to the variationsData array
+            variationsData.push({ parentId, data: variationData });
+        }
 
-        let totalVariationsUploaded = 0;
-        // Split the variations data into chunks of 100
-        for (let variationBatch of variationsData) {
-            const variationChunks = chunkArray(variationBatch.data, 100);
-            for (const chunk of variationChunks) {
-                await WooCommerceAPI.post(`products/${variationBatch.parentId}/variations/batch`, { create: chunk });
-                totalVariationsUploaded += chunk.length;
-                sendMessage(ws, `Batch of ${chunk.length} variations processed`);
+        // Performing batch create/update for variations
+        for (const { parentId, data } of variationsData) {
+            const createVariationChunks = chunkArray(data.filter(variation => !existingVariationSKUs.includes(variation.sku)), 100);
+            const updateVariationChunks = chunkArray(data.filter(variation => existingVariationSKUs.includes(variation.sku)), 100);
 
+            for (const createChunk of createVariationChunks) {
+                await WooCommerceAPI.post(`products/${parentId}/variations/batch`, { create: createChunk });
+                // console.log(result);
+                sendMessage(ws, `Batch of ${createChunk.length} variations created for parent ${parentId}`);
+            }
+
+            for (const updateChunk of updateVariationChunks) {
+                await WooCommerceAPI.post(`products/${parentId}/variations/batch`, { update: updateChunk });
+                // console.log(result)
+                sendMessage(ws, `Batch of ${updateChunk.length} variations updated for parent ${parentId}`);
             }
         }
 
-        console.log(`Successfully uploaded ${totalVariationsUploaded} variations.`);
-        sendMessage(ws, `Successfully uploaded ${totalVariationsUploaded} variations.`)
+        // console.log(`Successfully uploaded ${result.length} variations.`);
+        // sendMessage(ws, `Successfully uploaded ${result.length} variations.`);
 
         console.log("Successfully pushed products and their variations to WooCommerce!");
         sendMessage(ws, "Successfully pushed products and their variations to WooCommerce!")
@@ -883,14 +992,14 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
 
 
 // Utility function to split an array into chunks
-function chunkArray(array, chunkSize) {
-    const limitedArray = array.slice(0, 100);
-    const chunks = [];
-    for (let i = 0; i < limitedArray.length; i += chunkSize) {
-        chunks.push(limitedArray.slice(i, i + chunkSize));
-    }
-    return chunks;
-}
+// function chunkArray(array, chunkSize) {
+//     const limitedArray = array.slice(0, 100);
+//     const chunks = [];
+//     for (let i = 0; i < limitedArray.length; i += chunkSize) {
+//         chunks.push(limitedArray.slice(i, i + chunkSize));
+//     }
+//     return chunks;
+// }
 // Utility function to split an array into chunks
 function chunkArray(array, chunkSize, maxItems = array.length) {
     const chunks = [];
