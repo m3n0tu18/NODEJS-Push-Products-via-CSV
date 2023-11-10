@@ -242,7 +242,7 @@ async function notify(ws, message) {
 async function convertCSVToMongo(ws) {
     const csvFilePath = './csv_data/tubular-data-updated.csv';
     try {
-        await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+        // await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
 
         // Read CSV file
         const jsonArray = await csv().fromFile(csvFilePath);
@@ -295,7 +295,7 @@ async function convertCSVToMongo(ws) {
         }
 
         // Close the Mongoose connection
-        await mongoose.connection.close();
+        // await mongoose.connection.close();
     } catch (err) {
         console.log(err);
         sendMessage(ws, `Error: ${err}`);
@@ -831,48 +831,78 @@ async function fetchAllFromWooCommerce(endpoint, WooCommerceAPI) {
 
 
 // Run the Process
+// async function processBuilder(ws) {
+//     const startTime = Date.now();
+//     ws.send("startTimer");
+
+//     try {
+//         await notify(ws, "Fetching products from CSV...")
+//         await convertCSVToMongo(ws);
+
+
+//         await notify(ws, "Extracting attributes to new collection")
+//         await extractAttributes(ws)
+
+
+//         await notify(ws, "Extract and create Products in WooCommerce")
+//         await saveCategoriesToWooCommerce()
+
+//         await notify(ws, "Adding global attributes to WooCommerce")
+//         await addOrUpdateGlobalAttributes(ws, destinationURL, WooCommerceAPI)
+
+
+//         await notify(ws, "Mapping products for WooCommerce...")
+//         const mappedProducts = await mapProductsForWooCommerce(ws);
+
+//         await notify(ws, "Mapping products for WooCommerce...")
+//         await pushProductsToWooCommerce(ws, mappedProducts);
+
+//         sendMessage(ws, "Process completed...")
+//     } catch (err) {
+//         console.log('Error:', err);
+//     }
+
+//     const endTime = Date.now();
+//     const elapsedTime = (endTime - startTime);
+
+//     const hours = Math.floor(elapsedTime / 3600000);
+//     const minutes = Math.floor((elapsedTime - (hours * 3600000)) / 60000);
+//     const seconds = Math.floor((elapsedTime - (hours * 3600000) - (minutes * 60000)) / 1000);
+
+//     sendMessage(ws, `Elapsed time: ${hours} hours, ${minutes} minutes, ${seconds} seconds`);
+
+//     // Stop the timer on client side
+//     ws.send("stopTimer");
+// }
 async function processBuilder(ws) {
-    const startTime = Date.now();
-    ws.send("startTimer");
-
     try {
-        await notify(ws, "Fetching products from CSV...")
+        // Establish MongoDB connection
+        await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+        console.log("MongoDB connected.");
+
+        // Process each step with the established connection
         await convertCSVToMongo(ws);
+        await extractAttributes(ws);
+        // await saveCategoriesToWooCommerce(ws);
+        // await addOrUpdateGlobalAttributes(ws, destinationURL, WooCommerceAPI);
+        // const mappedProducts = await mapProductsForWooCommerce(ws);
+        // await pushProductsToWooCommerce(ws, mappedProducts);
 
+        // Close MongoDB connection at the end
+        await mongoose.connection.close();
+        console.log("MongoDB connection closed.");
 
-        await notify(ws, "Extracting attributes to new collection")
-        await extractAttributes(ws)
-
-
-        await notify(ws, "Extract and create Products in WooCommerce")
-        await saveCategoriesToWooCommerce()
-
-        await notify(ws, "Adding global attributes to WooCommerce")
-        await addOrUpdateGlobalAttributes(ws, destinationURL, WooCommerceAPI)
-
-
-        await notify(ws, "Mapping products for WooCommerce...")
-        const mappedProducts = await mapProductsForWooCommerce(ws);
-
-        await notify(ws, "Mapping products for WooCommerce...")
-        await pushProductsToWooCommerce(ws, mappedProducts);
-
-        sendMessage(ws, "Process completed...")
     } catch (err) {
-        console.log('Error:', err);
+        console.error("Error in processBuilder:", err);
+        if (mongoose.connection.readyState) {
+            // Close connection if it's still open in case of an error
+            await mongoose.connection.close();
+            console.log("MongoDB connection closed due to an error.");
+        }
+        if (ws) {
+            sendMessage(ws, `Error: ${err.message}`);
+        }
     }
-
-    const endTime = Date.now();
-    const elapsedTime = (endTime - startTime);
-
-    const hours = Math.floor(elapsedTime / 3600000);
-    const minutes = Math.floor((elapsedTime - (hours * 3600000)) / 60000);
-    const seconds = Math.floor((elapsedTime - (hours * 3600000) - (minutes * 60000)) / 1000);
-
-    sendMessage(ws, `Elapsed time: ${hours} hours, ${minutes} minutes, ${seconds} seconds`);
-
-    // Stop the timer on client side
-    ws.send("stopTimer");
 }
 
 
