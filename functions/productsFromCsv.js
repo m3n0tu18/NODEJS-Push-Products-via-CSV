@@ -136,11 +136,28 @@ const tempProductSchema = new mongoose.Schema({
 // Preparing WooCommerce Schema for Batch Upload (IN PROGRESS)
 const productSchema = new mongoose.Schema({
     name: String,
-    slug: String,
-    date_created: String,
-    date_created_gmt: String,
-    date_modified: String,
-    date_modified_gmt: String,
+    slug: {
+        type: String,
+        unique: true
+    },
+    date_created: {
+        type: String,
+        default: new Date().toISOString(),
+        immutable: true
+    },
+    date_created_gmt: {
+        type: String,
+        default: new Date().toISOString(),
+        immutable: true
+    },
+    date_modified: {
+        type: String,
+        default: new Date().toISOString(),
+    },
+    date_modified_gmt: {
+        type: String,
+        default: new Date().toISOString(),
+    },
     type: String,
     status: String,
     featured: Boolean,
