@@ -16,15 +16,18 @@ const path = require('path');
 const fs = require('fs')
 const csv = require('csvtojson');  // Move this to the top of your file for better performance
 
-const WooCommerce = require("@woocommerce/woocommerce-rest-api").default
+const WooCommerceRestApi = require("@woocommerce/woocommerce-rest-api").default
 
-const WooCommerceAPI = new WooCommerce({
-    url: process.env.WP_DESTINATION_URL,
-    consumerKey: process.env.WC_CONSUMER_KEY,
-    consumerSecret: process.env.WC_CONSUMER_SECRET,
-    version: process.env.WC_API_VERSION,
-    queryStringAuth: true,
-});
+// const WooCommerceAPI = new WooCommerceRestApi({
+//     url: process.env.WP_DESTINATION_URL,
+//     consumerKey: process.env.WC_CONSUMER_KEY,
+//     consumerSecret: process.env.WC_CONSUMER_SECRET,
+//     version: process.env.WC_API_VERSION,
+//     queryStringAuth: true,
+// });
+
+// console.log(WooCommerceAPI instanceof WooCommerceRestApi); // Should return true
+
 
 // data cleaner upper (used in schema) (USED AND WORKS)
 function splitAndTrim(value) {
@@ -33,7 +36,11 @@ function splitAndTrim(value) {
 
 // Mongo DB Schema (USED AND WORKS)
 const tempProductSchema = new mongoose.Schema({
-    "SKU": String,
+    "SKU": {
+        type: String,
+        required: true,
+        unique: true,
+    },
     "Parent SKU": String,
     "Product Title": String,
     "Description": String,
@@ -147,7 +154,10 @@ const productSchema = new mongoose.Schema({
     catalog_visibility: String,
     description: String,
     short_description: String,
-    sku: String,
+    sku: {
+        type: String,
+        unique: true,
+    },
     price: String,
     regular_price: String,
     sale_price: String,
@@ -203,7 +213,7 @@ const productSchema = new mongoose.Schema({
 
 // Mongo DB Model (USED AND WORKS)
 const TempProduct = mongoose.model('TempProduct', tempProductSchema, 'csvProductData');
-const Product = mongoose.model('Product', productSchema, 'wooCommerceProducts')
+// const Product = mongoose.model('Product', productSchema, 'wooCommerceProducts')
 
 // Websocket Sender function (USED AND WORKS)
 function sendMessage(ws, message) {
@@ -380,6 +390,7 @@ async function extractAttributes(ws) {
                             await attributes.insertOne({
                                 name: attribute,
                                 variation: variation,
+                                createdAt: new Date().toISOString(),
                                 values: []
                             });
                         }
@@ -390,7 +401,12 @@ async function extractAttributes(ws) {
                         attributeCache[attribute].add(attrVal);
                         await attributes.updateOne(
                             { name: attribute },
-                            { $push: { values: attrVal } }
+                            {
+                                $push: {
+                                    updatedAt: new Date().toISOString(),
+                                    values: attrVal
+                                }
+                            }
                         );
                     }
                 }
@@ -399,8 +415,17 @@ async function extractAttributes(ws) {
     }
 }
 
+
+
 // Function to fetch all results from WooCommerce with pagination (USED AND WORKS)
-async function fetchAllFromWooCommerce(endpoint, WooCommerceAPI) {
+async function fetchAllFromWooCommerce(endpoint) {
+    const WooCommerceAPI = new WooCommerceRestApi({
+        url: process.env.WP_DESTINATION_URL,
+        consumerKey: process.env.WC_CONSUMER_KEY,
+        consumerSecret: process.env.WC_CONSUMER_SECRET,
+        version: process.env.WC_API_VERSION,
+        queryStringAuth: true,
+    });
     let page = 1;
     let results = [];
     while (true) {
@@ -413,7 +438,14 @@ async function fetchAllFromWooCommerce(endpoint, WooCommerceAPI) {
 }
 
 // Add or update Global Attributes within WooCommerce (USED AND WORKS)
-async function addOrUpdateGlobalAttributes(ws, destinationURL, WooCommerceAPI) {
+async function addOrUpdateGlobalAttributes(ws) {
+    const WooCommerceAPI = new WooCommerceRestApi({
+        url: process.env.WP_DESTINATION_URL,
+        consumerKey: process.env.WC_CONSUMER_KEY,
+        consumerSecret: process.env.WC_CONSUMER_SECRET,
+        version: process.env.WC_API_VERSION,
+        queryStringAuth: true,
+    });
     await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
     const attributes = mongoose.connection.collection('product_attributes');
     const allAttributes = await attributes.find({}).toArray();
@@ -470,15 +502,15 @@ async function addOrUpdateGlobalAttributes(ws, destinationURL, WooCommerceAPI) {
             }
 
             // Delete any terms in WooCommerce that don't exist in the database
-            for (const existingTerm of existingTerms) {
-                if (!attr.values.includes(existingTerm.name)) {
-                    try {
-                        await WooCommerceAPI.delete(`products/attributes/${existingAttribute.id}/terms/${existingTerm.id}`);
-                    } catch (err) {
-                        console.error(`Error deleting term "${existingTerm.name}": ${err.message}`);
-                    }
-                }
-            }
+            // for (const existingTerm of existingTerms) {
+            //     if (!attr.values.includes(existingTerm.name)) {
+            //         try {
+            //             await WooCommerceAPI.delete(`products/attributes/${existingAttribute.id}/terms/${existingTerm.id}`);
+            //         } catch (err) {
+            //             console.error(`Error deleting term "${existingTerm.name}": ${err.message}`);
+            //         }
+            //     }
+            // }
 
         } else {
             try {
@@ -493,7 +525,12 @@ async function addOrUpdateGlobalAttributes(ws, destinationURL, WooCommerceAPI) {
                 });
 
                 if (attributeResponse.data && attributeResponse.data.id) {
-                    await attributes.updateOne({ _id: attr._id }, { $set: { woo_id: attributeResponse.data.id } });
+                    await attributes.updateOne({ _id: attr._id }, {
+                        $set: {
+                            woo_id: attributeResponse.data.id,
+                            updatedAt: new Date().toISOString()
+                        }
+                    });
                     for (const term of attr.values) {
                         await WooCommerceAPI.post(`products/attributes/${attributeResponse.data.id}/terms`, {
                             name: term,
@@ -510,16 +547,16 @@ async function addOrUpdateGlobalAttributes(ws, destinationURL, WooCommerceAPI) {
     }
 
     // Delete any attributes in WooCommerce that don't exist in the database
-    for (const existingAttribute of existingAttributes) {
-        if (!allAttributes.some(attr => attr.name.toLowerCase() === existingAttribute.slug)) {
-            try {
-                await WooCommerceAPI.delete(`products/attributes/${existingAttribute.id}`);
-            } catch (err) {
-                console.error(`Error deleting attribute "${existingAttribute.slug}": ${err.message}`);
+    // for (const existingAttribute of existingAttributes) {
+    //     if (!allAttributes.some(attr => attr.name.toLowerCase() === existingAttribute.slug)) {
+    //         try {
+    //             await WooCommerceAPI.delete(`products/attributes/${existingAttribute.id}`);
+    //         } catch (err) {
+    //             console.error(`Error deleting attribute "${existingAttribute.slug}": ${err.message}`);
 
-            }
-        }
-    }
+    //         }
+    //     }
+    // }
 
     mongoose.connection.close();
 }
@@ -661,6 +698,13 @@ async function saveCategoriesToWooCommerce() {
     const csvProductData = mongoose.connection.collection('csvProductData');
     const allCategories = await csvProductData.find({}).toArray();
 
+
+    // Get product categproes from WooCommerce
+
+    const wooCats = await fetchAllFromWooCommerce("products/categories");
+
+    if (wooCats.length > 0) return
+
     // const client = await MongoClient.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true });
     // const db = client.db('YOUR_DB_NAME');
     // const csvProductData = await db.collection('csvProductData').find({}).toArray();
@@ -674,11 +718,23 @@ async function saveCategoriesToWooCommerce() {
 
     // 4. POST categories to WooCommerce and get woo_id
     for (let category of categoriesToInsert) {
+        const WooCommerceAPI = new WooCommerceRestApi({
+            url: process.env.WP_DESTINATION_URL,
+            consumerKey: process.env.WC_CONSUMER_KEY,
+            consumerSecret: process.env.WC_CONSUMER_SECRET,
+            version: process.env.WC_API_VERSION,
+            queryStringAuth: true,
+        });
         const response = await WooCommerceAPI.post('products/categories', { name: category.name });
         const woo_id = response.data.id;
 
         // 5. Update product_categories collection with woo_id
-        await mongoose.connection.collection('product_categories').updateOne({ name: category.name }, { $set: { woo_id: woo_id } });
+        await mongoose.connection.collection('product_categories').updateOne({ name: category.name }, {
+            $set: {
+                woo_id: woo_id,
+                updatedAt: new Date().toISOString()
+            }
+        });
     }
 
     mongoose.connection.close();
@@ -731,7 +787,7 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
         // Prepare data for parent variable products
         const parentProductsData = variableProducts.map(product => {
 
-            console.log(product.categories);
+            // console.log(product.categories);
 
             return {
                 name: product.name,
@@ -769,6 +825,13 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
         let createdParentSkus = [];
         let createdParentIds = [];
         for (const chunk of parentProductsChunks) {
+            const WooCommerceAPI = new WooCommerceRestApi({
+                url: process.env.WP_DESTINATION_URL,
+                consumerKey: process.env.WC_CONSUMER_KEY,
+                consumerSecret: process.env.WC_CONSUMER_SECRET,
+                version: process.env.WC_API_VERSION,
+                queryStringAuth: true,
+            });
             const response = await WooCommerceAPI.post("products/batch", { create: chunk });
             createdParentIds = createdParentIds.concat(response.data.create.map(p => p.id));
             createdParentSkus = createdParentSkus.concat(response.data.create.map(p => p.sku));
@@ -822,6 +885,13 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
         for (let variationBatch of variationsData) {
             const variationChunks = chunkArray(variationBatch.data, 100);
             for (const chunk of variationChunks) {
+                const WooCommerceAPI = new WooCommerceRestApi({
+                    url: process.env.WP_DESTINATION_URL,
+                    consumerKey: process.env.WC_CONSUMER_KEY,
+                    consumerSecret: process.env.WC_CONSUMER_SECRET,
+                    version: process.env.WC_API_VERSION,
+                    queryStringAuth: true,
+                });
                 await WooCommerceAPI.post(`products/${variationBatch.parentId}/variations/batch`, { create: chunk });
                 totalVariationsUploaded += chunk.length;
                 sendMessage(ws, `Batch of ${chunk.length} variations processed`);
@@ -897,7 +967,7 @@ async function processBuilder(ws) {
 
         await sleep(delayTimeout)
         sendMessage(ws, "Adding global attributes to WooCommerce")
-        await addOrUpdateGlobalAttributes(ws, destinationURL, WooCommerceAPI)
+        await addOrUpdateGlobalAttributes(ws, destinationURL)
         // WORKS
 
         await sleep(delayTimeout);
