@@ -1060,8 +1060,6 @@ async function uploadParentProducts(ws, variableProducts) {
         }
 
         // Update MongoDB with the WooCommerce product ID
-        // await MappedProduct.updateOne({ sku: product.sku }, { $set: { woo_id: wooCommerceProductId } }, { upsert: true });
-        // await MappedProduct.updateOne({ sku: product.sku }, { $set: { woo_id: wooCommerceProductId } }, { upsert: true });
         await MappedProduct.updateOne({ sku: product.sku }, { $set: { woo_id: wooCommerceProductId } }, { upsert: true });
 
         // Populate the arrays with the product ID and SKU
@@ -1069,22 +1067,6 @@ async function uploadParentProducts(ws, variableProducts) {
         createdParentSkus.push(product.sku);
         sendMessage(ws, `Processed product with SKU: ${product.sku}`);
     }
-
-    // Splitting into chunks and uploading
-    // const parentProductsChunks = chunkArray(parentProductsData, 100);
-    // let createdParentIds = [];
-    // let createdParentSkus = [];
-
-    // for (const chunk of parentProductsChunks) {
-    //     const response = await WooCommerceAPI.post("products/batch", { create: chunk, update: chunk });
-    //     // console.log(chunk)
-    //     console.log('------- response -------')
-    //     console.log(response.data.update)
-    //     createdParentIds = createdParentIds.concat(response.data.create.map(p => p.id));
-    //     createdParentSkus = createdParentSkus.concat(response.data.create.map(p => p.sku));
-
-    //     sendMessage(ws, `Batch of ${chunk.length} parent products processed`);
-    // }
 
     return { createdParentIds, createdParentSkus };
 }
@@ -1166,39 +1148,62 @@ async function uploadVariations(ws, variations, createdParentSkus, createdParent
             continue;
         }
 
-        const variationsData = childVariations.map(variation => ({
-            regular_price: variation.regular_price,
-            attributes: variation.attributes.map(attr => ({
-                id: attr.id,
-                name: attr.name,
-                option: attr.option[0]
-            })),
-            downloadable: variation.downloadable,
-            downloads: variation.downloads.map(download => ({
-                name: download.name,
-                file: download.file
-            })),
-            sku: variation.sku,
-            height: variation.height,
-            width: variation.width,
-            length: variation.length,
-            description: variation.description,
-            image: variation.image_id ? { id: variation.image_id } : null
-        }));
 
-        const variationChunks = chunkArray(variationsData, 100);
 
-        for (const chunk of variationChunks) {
-            try {
-                const response = await WooCommerceAPI.post(`products/${parentId}/variations/batch`, { create: chunk });
-                if (!response || !response.data) {
-                    console.error('Invalid API response for variation upload:', response);
-                } else {
-                    sendMessage(ws, `Batch of ${chunk.length} variations processed for parent SKU: ${parentSku}`);
-                }
-            } catch (error) {
-                console.error(`Error uploading variations for parent SKU: ${parentSku}:`, error);
+        // const variationChunks = chunkArray(variationsData, 100);
+
+        // for (const chunk of variationChunks) {
+        //     try {
+        //         const response = await WooCommerceAPI.post(`products/${parentId}/variations/batch`, { create: chunk });
+        //         if (!response || !response.data) {
+        //             console.error('Invalid API response for variation upload:', response);
+        //         } else {
+        //             sendMessage(ws, `Batch of ${chunk.length} variations processed for parent SKU: ${parentSku}`);
+        //         }
+        //     } catch (error) {
+        //         console.error(`Error uploading variations for parent SKU: ${parentSku}:`, error);
+        //     }
+        // }
+
+        for (const variation of childVariations) {
+            let response;
+            let wooCommerceVariationId;
+            const existingVariation = await MappedProduct.findOne({ sku: variation.sku });
+
+            const variationData = {
+                regular_price: variation.regular_price,
+                attributes: variation.attributes.map(attr => ({
+                    id: attr.id,
+                    name: attr.name,
+                    option: attr.option[0]
+                })),
+                downloadable: variation.downloadable,
+                downloads: variation.downloads.map(download => ({
+                    name: download.name,
+                    file: download.file
+                })),
+                sku: variation.sku,
+                height: variation.height,
+                width: variation.width,
+                length: variation.length,
+                description: variation.description,
+                image: variation.image_id ? { id: variation.image_id } : null
+            };
+
+            if (existingVariation && existingVariation.woo_id) {
+                // Update existing variation in WooCommerce
+                response = await WooCommerceAPI.put(`products/${parentId}/variations/${existingVariation.woo_id}`, variationData);
+                wooCommerceVariationId = existingVariation.woo_id;
+            } else {
+                // Create new variation in WooCommerce
+                response = await WooCommerceAPI.post(`products/${parentId}/variations`, variationData);
+                wooCommerceVariationId = response.data.id; // Extracting the variation ID from the response
             }
+
+            // Update MongoDB with the WooCommerce variation ID
+            await MappedProduct.updateOne({ sku: variation.sku }, { $set: { woo_id: wooCommerceVariationId } }, { upsert: true });
+
+            sendMessage(ws, `Processed variation with SKU: ${variation.sku}`);
         }
     }
 
