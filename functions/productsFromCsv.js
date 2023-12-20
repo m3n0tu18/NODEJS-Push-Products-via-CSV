@@ -844,11 +844,13 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
         const mProducts = modifyMappedProductsWithMedia(mappedProducts, media);
         const { variableProducts, variations } = separateProductsAndVariations(mProducts);
         const { wooParentIds, wooParentSkus } = await uploadParentProducts(ws, variableProducts);
-        const uploadedVariations = await uploadVariations(ws, variations, wooParentSkus, wooParentIds);
+        const { wooVariationIds, wooVariationSkus } = await uploadVariations(ws, variations, wooParentSkus, wooParentIds);
 
         console.log(uploadedVariations);
+        const parentProductsLength = wooParentSkus.length;
+        const variationProductsLength = wooVariationSkus.length;
 
-        sendMessage(ws, "Successfully pushed products and their variations to WooCommerce!");
+        sendMessage(ws, `Successfully pushed ${parentProductsLength} Parent Products and their ${variationProductsLength} variations to WooCommerce!`);
     } catch (error) {
         console.error("Error pushing products to WooCommerce:", error);
         sendMessage(ws, `Error pushing products to WooCommerce: ${error}`);
@@ -1246,8 +1248,6 @@ function areImagesEqual(newImage, currentImage) {
     // This assumes images are compared based on an ID or src attribute
     return JSON.stringify(newImage) === JSON.stringify(currentImage);
 }
-
-
 
 
 function chunkArray(array, chunkSize) {
