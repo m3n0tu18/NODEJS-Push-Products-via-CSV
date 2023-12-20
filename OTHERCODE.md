@@ -2014,3 +2014,5 @@ async function mapAttributesToWooIds(product, attributesCollection) {
 //     // Stop the timer on client side
 //     ws.send("stopTimer");
 // }
+
+
