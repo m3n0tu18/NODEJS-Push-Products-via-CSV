@@ -232,17 +232,7 @@ const productSchema = new mongoose.Schema({
 const TempProduct = mongoose.model('TempProduct', tempProductSchema, 'csvProductData');
 // const Product = mongoose.model('Product', productSchema, 'wooCommerceProducts')
 
-// Websocket Sender function (USED AND WORKS)
-function sendMessage(ws, message) {
-    if (ws && ws.readyState === ws.OPEN) {
-        ws.send(message);
-    }
-}
 
-// Sleeper function (USED AND WORKS)
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
 
 
 // Function to convert CSV to MongoDB (USED AND WORKS)
@@ -456,7 +446,7 @@ async function fetchAllFromWooCommerce(endpoint) {
 }
 
 
-
+// CRUD (Without the D) Global Attributes to WooCommerce
 async function addOrUpdateGlobalAttributes(ws) {
     await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
     const existingTerms = await checkToSeeIfAttributeAndTermExists()
@@ -543,707 +533,22 @@ async function addOrUpdateGlobalAttributes(ws) {
 
     }
 
-}
+    // FUTURE PLANS :: Delete any terms in WooCommerce that don't exist in the database
+    //  for (const existingTerm of existingTerms) {
+    //      if (!attr.values.includes(existingTerm.name)) {
+    //          try {
+    //              await WooCommerceAPI.delete(`products/attributes/${existingAttribute.id}/terms/${existingTerm.id}`);
+    //          } catch (err) {
+    //              console.error(`Error deleting term "${existingTerm.name}": ${err.message}`);
+    //          }
+    //      }
+    //  }
 
-async function checkToSeeIfAttributeAndTermExists() {
-    await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
-    const attributesCollection = mongoose.connection.collection('product_attributes');
-    const allAttributes = await attributesCollection.find({}).toArray();
-
-
-    // console.log(allAttributes)
-
-    const existingAttributes = await fetchAllFromWooCommerce("products/attributes");
-
-    const existingAttributesMap = existingAttributes.reduce((map, attr) => {
-        const slugWithoutPrefix = attr.slug; //.replace(/^pa_/, '').toLowerCase()
-        map[slugWithoutPrefix] = attr;
-        return map;
-    }, {});
-
-    // Array to store the comparison results
-    const comparisonResults = [];
-
-    for (const attr of allAttributes) {
-        const attrSlug = attr.slug.toLowerCase();
-        let attributeResult = {
-            status: false,
-            name: attr.name,
-            woocommerceId: null,
-            dbId: attr._id,
-            slug: attrSlug,
-            terms: []
-        };
-
-        // console.log(attr.slug)
-        // console.log(map)
-
-        if (existingAttributesMap[attrSlug]) {
-            attributeResult.status = true;
-            attributeResult.woocommerceId = existingAttributesMap[attrSlug].id;
-
-            // Fetch terms for this attribute from WooCommerce
-            const existingTerms = await fetchAllFromWooCommerce(`products/attributes/${existingAttributesMap[attrSlug].id}/terms`);
-            const existingTermsMap = existingTerms.reduce((map, term) => {
-                map[term.name.toLowerCase()] = term;
-                return map;
-            }, {});
-
-            for (const term of attr.values) {
-                if (existingTermsMap[term.toLowerCase()]) {
-                    attributeResult.terms.push({
-                        exists: true,
-                        term_item: {
-                            name: term,
-                            id: existingTermsMap[term.toLowerCase()].id
-                        }
-                    });
-                } else {
-                    attributeResult.terms.push({
-                        exists: false,
-                        term_item: {
-                            name: term,
-                            id: null
-                        }
-                    });
-                }
-            }
-        } else {
-            // If attribute does not exist in WooCommerce, add all MongoDB terms as non-existing
-            for (const term of attr.values) {
-                attributeResult.terms.push({
-                    exists: false,
-                    term_item: {
-                        name: term,
-                        id: null
-                    }
-                });
-            }
-        }
-        comparisonResults.push(attributeResult);
-    }
-
-
-    // console.log(comparisonResults)
-    return comparisonResults;
 }
 
 
 
-
-// Add or update Global Attributes within WooCommerce (USED AND WORKS)
-// async function addOrUpdateGlobalAttributes(ws) {
-//     const WooCommerceAPI = new WooCommerceRestApi({
-//         url: process.env.WP_DESTINATION_URL,
-//         consumerKey: process.env.WC_CONSUMER_KEY,
-//         consumerSecret: process.env.WC_CONSUMER_SECRET,
-//         version: process.env.WC_API_VERSION,
-//         queryStringAuth: true,
-//     });
-//     await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
-//     const attributes = mongoose.connection.collection('product_attributes');
-//     const allAttributes = await attributes.find({}).toArray();
-
-//     const existingAttributes = await fetchAllFromWooCommerce("products/attributes");
-
-//     for (const attr of allAttributes) {
-//         // const existingAttribute = existingAttributes.data.find(a => a.slug === attr.name.toLowerCase());
-//         const existingAttribute = existingAttributes.find(a => a.slug === attr.name.toLowerCase());
-//         if (existingAttribute) {
-//             try {
-//                 // If attribute exists, update it (if necessary)
-//                 await WooCommerceAPI.put(`products/attributes/${existingAttribute.id}`, {
-//                     name: attr.name,
-//                     slug: attr.name.toLowerCase(),
-//                     type: "select",
-//                     order_by: "menu_order",
-//                     has_archives: true,
-//                     is_variation: attr.variation
-//                 });
-//                 sendMessage(ws, `Attribute <strong>${attr.name}</strong> updated.`);
-//             } catch (err) {
-//                 console.error(`Error updating attribute: ${err.message}`);
-//                 sendMessage(ws, `Error updating attribute <strong>${attr.name}</strong>.`)
-//                 continue; // Skip the current loop iteration
-//             }
-
-//             // When fetching terms for an attribute:
-//             const existingTerms = await fetchAllFromWooCommerce(`products/attributes/${existingAttribute.id}/terms`);
-
-//             for (const term of attr.values) {
-//                 const existingTerm = existingTerms.find(t => t.slug === term.toLowerCase());
-
-//                 try {
-//                     if (existingTerm) {
-//                         // If term exists, update it (if necessary)
-//                         await WooCommerceAPI.put(`products/attributes/${existingAttribute.id}/terms/${existingTerm.id}`, {
-//                             name: term,
-//                             slug: term.toLowerCase()
-//                         });
-//                         sendMessage(ws, `Term <strong>'${term}'</strong> under attribute <strong>'${attr.name}'</strong> updated.`);
-//                     } else {
-//                         // If term doesn't exist, create it
-//                         await WooCommerceAPI.post(`products/attributes/${existingAttribute.id}/terms`, {
-//                             name: term,
-//                             slug: term.toLowerCase()
-//                         });
-//                         sendMessage(ws, `Term <strong>'${term}'</strong> under attribute <strong>'${attr.name}'</strong> created.`);
-//                     }
-//                 } catch (err) {
-//                     console.error(`Error handling term "${term}": ${err.message}`);
-//                     sendMessage(ws, `Error handling term <strong>${term}</strong> under attribute <strong>'${attr.name}</strong>`);
-
-//                 }
-
-
-//             }
-
-//             // Delete any terms in WooCommerce that don't exist in the database
-//             // for (const existingTerm of existingTerms) {
-//             //     if (!attr.values.includes(existingTerm.name)) {
-//             //         try {
-//             //             await WooCommerceAPI.delete(`products/attributes/${existingAttribute.id}/terms/${existingTerm.id}`);
-//             //         } catch (err) {
-//             //             console.error(`Error deleting term "${existingTerm.name}": ${err.message}`);
-//             //         }
-//             //     }
-//             // }
-
-//         } else {
-//             try {
-//                 // If attribute doesn't exist, create it and its terms
-//                 const attributeResponse = await WooCommerceAPI.post("products/attributes", {
-//                     name: attr.name,
-//                     slug: attr.name.toLowerCase(),
-//                     type: "select",
-//                     order_by: "menu_order",
-//                     has_archives: true,
-//                     is_variation: attr.variation
-//                 });
-
-//                 if (attributeResponse.data && attributeResponse.data.id) {
-//                     await attributes.updateOne({ _id: attr._id }, {
-//                         $set: {
-//                             woo_id: attributeResponse.data.id,
-//                             updatedAt: new Date().toISOString()
-//                         }
-//                     });
-//                     for (const term of attr.values) {
-//                         await WooCommerceAPI.post(`products/attributes/${attributeResponse.data.id}/terms`, {
-//                             name: term,
-//                             slug: term.toLowerCase()
-//                         });
-//                     }
-//                 }
-//             } catch (err) {
-//                 console.error(`Error creating attribute "${attr.name}": ${err.message}`);
-//                 sendMessage(ws, `Error creating attribute "${attr.name}" - It already exists!`)
-//             }
-
-//         }
-//     }
-
-//     // Delete any attributes in WooCommerce that don't exist in the database
-//     // for (const existingAttribute of existingAttributes) {
-//     //     if (!allAttributes.some(attr => attr.name.toLowerCase() === existingAttribute.slug)) {
-//     //         try {
-//     //             await WooCommerceAPI.delete(`products/attributes/${existingAttribute.id}`);
-//     //         } catch (err) {
-//     //             console.error(`Error deleting attribute "${existingAttribute.slug}": ${err.message}`);
-
-//     //         }
-//     //     }
-//     // }
-
-// }
-
-//V3 - Works as main
-// async function addOrUpdateGlobalAttributes(ws) {
-//     const WooCommerceAPI = new WooCommerceRestApi({
-//         url: process.env.WP_DESTINATION_URL,
-//         consumerKey: process.env.WC_CONSUMER_KEY,
-//         consumerSecret: process.env.WC_CONSUMER_SECRET,
-//         version: process.env.WC_API_VERSION,
-//         queryStringAuth: true,
-//     });
-
-//     try {
-//         await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
-//         const attributesCollection = mongoose.connection.collection('product_attributes');
-//         const allAttributes = await attributesCollection.find({}).toArray();
-
-//         const existingAttributes = await fetchAllFromWooCommerce("products/attributes");
-
-//         for (const attr of allAttributes) {
-//             let attributeId;
-//             const existingAttribute = existingAttributes.find(a => a.slug === attr.name.toLowerCase());
-
-//             if (existingAttribute) {
-//                 // If attribute exists, update it
-//                 const response = await WooCommerceAPI.put(`products/attributes/${existingAttribute.id}`, {
-//                     name: attr.name,
-//                     slug: attr.name.toLowerCase(),
-//                     type: "select",
-//                     order_by: "menu_order",
-//                     has_archives: true,
-//                     is_variation: attr.variation
-//                 });
-//                 attributeId = response.data.id;
-//                 await attributesCollection.updateOne({ _id: attr._id }, {
-//                     $set: {
-//                         woo_id: attributeId,
-//                         updatedAt: new Date().toISOString()
-//                     }
-//                 });
-//                 sendMessage(ws, `Attribute <strong>${attr.name}</strong> updated.`);
-//             } else {
-//                 // If attribute doesn't exist, create it
-//                 const response = await WooCommerceAPI.post("products/attributes", {
-//                     name: attr.name,
-//                     slug: attr.name.toLowerCase(),
-//                     type: "select",
-//                     order_by: "menu_order",
-//                     has_archives: true,
-//                     is_variation: attr.variation
-//                 });
-//                 attributeId = response.data.id;
-//                 await attributesCollection.updateOne({ _id: attr._id }, {
-//                     $set: {
-//                         woo_id: attributeId,
-//                         updatedAt: new Date().toISOString()
-//                     }
-//                 });
-//                 sendMessage(ws, `Attribute <strong>${attr.name}</strong> created.`);
-//             }
-
-//             // Handle terms for the attribute
-//             const existingTerms = await fetchAllFromWooCommerce(`products/attributes/${attributeId}/terms`);
-
-//             for (const term of attr.values) {
-//                 const existingTerm = existingTerms.find(t => t.slug === term.toLowerCase());
-
-//                 if (existingTerm) {
-//                     // If term exists, update it
-//                     await WooCommerceAPI.put(`products/attributes/${attributeId}/terms/${existingTerm.id}`, {
-//                         name: term,
-//                         slug: term.toLowerCase()
-//                     });
-//                     sendMessage(ws, `-- Term <strong>${term}</strong> under attribute <strong>${attr.name}</strong> updated.`);
-//                 } else {
-//                     // If term doesn't exist, create it
-//                     await WooCommerceAPI.post(`products/attributes/${attributeId}/terms`, {
-//                         name: term,
-//                         slug: term.toLowerCase()
-//                     });
-//                     sendMessage(ws, `-- Term <strong>${term}</strong> under attribute <strong>${attr.name}</strong> created.`);
-//                 }
-//             }
-//         }
-//     } catch (err) {
-//         console.error(`Error in addOrUpdateGlobalAttributes: ${err.message}`);
-//         sendMessage(ws, 'All attributes exist on website, skipping...');
-//     } finally {
-//         await mongoose.connection.close();
-//     }
-// }
-
-//V4 - Update Terms even if attribute exists.
-// async function addOrUpdateGlobalAttributes(ws) {
-//     const WooCommerceAPI = new WooCommerceRestApi({
-//         url: process.env.WP_DESTINATION_URL,
-//         consumerKey: process.env.WC_CONSUMER_KEY,
-//         consumerSecret: process.env.WC_CONSUMER_SECRET,
-//         version: process.env.WC_API_VERSION,
-//         queryStringAuth: true,
-//     });
-
-//     try {
-//         await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
-//         const attributesCollection = mongoose.connection.collection('product_attributes');
-//         const allAttributes = await attributesCollection.find({}).toArray();
-
-//         const existingAttributes = await fetchAllFromWooCommerce("products/attributes");
-
-//         for (const attr of allAttributes) {
-//             let attributeId = null;
-
-//             const existingAttribute = existingAttributes.find(a => a.slug === attr.name.toLowerCase());
-
-//             if (existingAttribute) {
-//                 // If attribute exists, update it
-//                 try {
-//                     const response = await WooCommerceAPI.put(`products/attributes/${existingAttribute.id}`, {
-//                         name: attr.name,
-//                         slug: attr.name.toLowerCase(),
-//                         type: "select",
-//                         order_by: "menu_order",
-//                         has_archives: true,
-//                         is_variation: attr.variation
-//                     });
-//                     attributeId = response.data.id;
-//                     sendMessage(ws, `Attribute <strong>${attr.name}</strong> updated.`);
-//                 } catch (updateErr) {
-//                     sendMessage(ws, `Error updating attribute <strong>${attr.name}</strong>.`);
-//                     console.error(`Error updating attribute '${attr.name}': ${updateErr.message}`);
-//                 }
-//             } else {
-//                 // If attribute doesn't exist, create it
-//                 try {
-//                     const response = await WooCommerceAPI.post("products/attributes", {
-//                         name: attr.name,
-//                         slug: attr.name.toLowerCase(),
-//                         type: "select",
-//                         order_by: "menu_order",
-//                         has_archives: true,
-//                         is_variation: attr.variation
-//                     });
-//                     attributeId = response.data.id;
-//                     sendMessage(ws, `Attribute <strong>${attr.name}</strong> created.`);
-//                 } catch (createErr) {
-//                     if (createErr.response && createErr.response.status === 400) {
-//                         sendMessage(ws, `Attribute <strong>${attr.name}</strong> already exists.`);
-//                         attributeId = existingAttribute.id;
-//                     } else {
-//                         throw createErr;
-//                     }
-//                 }
-//             }
-
-//             // Update the attribute's woo_id in the database
-//             if (attributeId) {
-//                 await attributesCollection.updateOne({ _id: attr._id }, {
-//                     $set: {
-//                         woo_id: attributeId,
-//                         updatedAt: new Date().toISOString()
-//                     }
-//                 });
-//             }
-
-//             // Handle terms for the attribute
-//             // Only proceed if we have a valid attributeId
-//             if (attributeId) {
-//                 const existingTerms = await fetchAllFromWooCommerce(`products/attributes/${attributeId}/terms`);
-
-//                 for (const term of attr.values) {
-//                     const existingTerm = existingTerms.find(t => t.slug === term.toLowerCase());
-
-//                     if (existingTerm) {
-//                         // If term exists, update it
-//                         await WooCommerceAPI.put(`products/attributes/${attributeId}/terms/${existingTerm.id}`, {
-//                             name: term,
-//                             slug: term.toLowerCase()
-//                         });
-//                         sendMessage(ws, `-- Term <strong>${term}</strong> under attribute <strong>${attr.name}</strong> updated.`);
-//                     } else {
-//                         // If term doesn't exist, create it
-//                         await WooCommerceAPI.post(`products/attributes/${attributeId}/terms`, {
-//                             name: term,
-//                             slug: term.toLowerCase()
-//                         });
-//                         sendMessage(ws, `-- Term <strong>${term}</strong> under attribute <strong>${attr.name}</strong> created.`);
-//                     }
-//                 }
-//             }
-//         }
-//     } catch (err) {
-//         console.error(`Error in addOrUpdateGlobalAttributes: ${err.message}`);
-//         sendMessage(ws, 'An error occurred while updating global attributes.');
-//     } finally {
-//         await mongoose.connection.close();
-//     }
-// }
-
-//V5
-// async function addOrUpdateGlobalAttributes(ws) {
-//     const WooCommerceAPI = new WooCommerceRestApi({
-//         url: process.env.WP_DESTINATION_URL,
-//         consumerKey: process.env.WC_CONSUMER_KEY,
-//         consumerSecret: process.env.WC_CONSUMER_SECRET,
-//         version: process.env.WC_API_VERSION,
-//         queryStringAuth: true,
-//     });
-
-//     try {
-//         await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
-//         const attributesCollection = mongoose.connection.collection('product_attributes');
-//         const allAttributes = await attributesCollection.find({}).toArray();
-
-//         const existingAttributes = await fetchAllFromWooCommerce("products/attributes");
-
-//         // console.log(existingAttributes)
-
-//         for (const attr of allAttributes) {
-
-//             let attributeId = null;
-//             const existingAttribute = existingAttributes.find(a => a.slug === attr.name.toLowerCase());
-
-//             if (existingAttribute) {
-//                 try {
-//                     const response = await WooCommerceAPI.put(`products/attributes/${existingAttribute.id}`, {
-//                         name: attr.name,
-//                         slug: attr.name.toLowerCase(),
-//                         type: "select",
-//                         order_by: "menu_order",
-//                         has_archives: true,
-//                         is_variation: attr.variation
-//                     });
-//                     if (response && response.data) {
-//                         attributeId = response.data.id;
-//                         const existingAttributes = await fetchAllFromWooCommerce(`products/attributes/${attr.woo_id}/terms`);
-//                         console.table(existingAttributes)
-//                         sendMessage(ws, `Attribute <strong>${attr.name}</strong> updated.`);
-
-//                     }
-//                 } catch (updateErr) {
-//                     sendMessage(ws, `Error updating attribute <strong>${attr.name}</strong>.`);
-//                     console.error(`Error updating attribute '${attr.name}': ${updateErr.message}`);
-//                 }
-//             } else {
-//                 try {
-//                     const response = await WooCommerceAPI.post("products/attributes", {
-//                         name: attr.name,
-//                         slug: attr.name.toLowerCase(),
-//                         type: "select",
-//                         order_by: "menu_order",
-//                         has_archives: true,
-//                         is_variation: attr.variation
-//                     });
-//                     if (response && response.data) {
-//                         attributeId = response.data.id;
-//                         sendMessage(ws, `Attribute <strong>${attr.name}</strong> created.`);
-//                     }
-//                 } catch (createErr) {
-//                     if (createErr.response && createErr.response.status === 400) {
-//                         sendMessage(ws, `Attribute <strong>${attr.name}</strong> already exists.`);
-//                         const existingAttribute = await fetchAllFromWooCommerce(`products/attributes/${attr.woo_id}/terms`);
-//                         console.log(existingAttribute)
-
-//                         for (const term of attr.values) {
-//                             // console.log(term)
-//                             await WooCommerceAPI.post(`products/attributes/${attr.woo_id}/terms`, {
-//                                 name: term,
-//                                 slug: term.toLowerCase()
-//                             }).then(async (response) => {
-//                                 console.log(response)
-//                             }).catch((err) => {
-//                                 console.log(err.response.data.code);
-//                                 sendMessage(ws, `-- Term <strong>${term}</strong> already exists, skipping`)
-//                             });
-//                         }
-//                         // return;
-//                         // return
-//                         // attributeId = existingAttribute ? existingAttribute.id : null;
-
-//                         sendMessage(ws, `-- Term <strong>${term}</strong> under attribute <strong>${attr.name}</strong> updated.`);
-//                     } else {
-//                         throw createErr;
-//                     }
-//                 }
-//             }
-
-//             // Update the attribute's woo_id in the database if attributeId is set
-//             if (attributeId) {
-//                 await attributesCollection.updateOne({ _id: attr._id }, {
-//                     $set: {
-//                         woo_id: attributeId,
-//                         updatedAt: new Date().toISOString()
-//                     }
-//                 });
-//             }
-
-//             // Handle terms for the attribute if attributeId is set
-//             if (attributeId) {
-
-//                 console.log(attributeId)
-
-//                 const existingTerms = await fetchAllFromWooCommerce(`products/attributes/${attributeId}/terms`);
-
-//                 for (const term of attr.values) {
-//                     const existingTerm = existingTerms.find(t => t.slug === term.toLowerCase());
-
-//                     if (existingTerm) {
-//                         // If term exists, update it
-//                         await WooCommerceAPI.put(`products/attributes/${attributeId}/terms/${existingTerm.id}`, {
-//                             name: term,
-//                             slug: term.toLowerCase()
-//                         });
-//                         sendMessage(ws, `-- Term <strong>${term}</strong> under attribute <strong>${attr.name}</strong> updated.`);
-//                     } else {
-//                         // If term doesn't exist, create it
-//                         await WooCommerceAPI.post(`products/attributes/${attributeId}/terms`, {
-//                             name: term,
-//                             slug: term.toLowerCase()
-//                         });
-//                         sendMessage(ws, `-- Term <strong>${term}</strong> under attribute <strong>${attr.name}</strong> created.`);
-//                     }
-//                 }
-//             }
-//         }
-//     } catch (err) {
-//         console.error(`Error in addOrUpdateGlobalAttributes: ${err.message}`);
-//         sendMessage(ws, 'An error occurred while updating global attributes.');
-//         sendMessage(ws, err)
-//     } finally {
-//         await mongoose.connection.close();
-//     }
-// }
-
-//V6
-// async function addOrUpdateGlobalAttributes(ws) {
-//     const WooCommerceAPI = new WooCommerceRestApi({
-//         url: process.env.WP_DESTINATION_URL,
-//         consumerKey: process.env.WC_CONSUMER_KEY,
-//         consumerSecret: process.env.WC_CONSUMER_SECRET,
-//         version: process.env.WC_API_VERSION,
-//         queryStringAuth: true,
-//     });
-
-//     try {
-//         await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
-//         const attributesCollection = mongoose.connection.collection('product_attributes');
-//         const allAttributes = await attributesCollection.find({}).toArray();
-
-//         const existingAttributes = await fetchAllFromWooCommerce("products/attributes");
-
-//         // console.log(allAttributes) // From DB
-//         // console.log("------------")
-//         // console.table(existingAttributes) // From Woo
-
-//         for (const attr of allAttributes) {
-//             console.log(existingAttributes[0].slug)
-//             console.log(attr.slug)
-//             const existingAttribute = existingAttributes.find(a => a.slug === attr.slug);
-//             console.log(existingAttribute)
-//         }
-
-//         // return
-
-//         for (const attr of allAttributes) {
-//             let attributeId = null;
-//             let needToUpdateTerms = false;
-
-//             console.log(attr)
-
-//             const existingAttribute = existingAttributes.find(a => a.slug === attr.name.toLowerCase());
-
-//             if (existingAttribute) {
-//                 // If attribute exists, update it
-//                 try {
-//                     await WooCommerceAPI.put(`products/attributes/${existingAttribute.id}`, {
-//                         name: attr.name,
-//                         slug: attr.name.toLowerCase().replace(/\s+/g, '-'),
-//                         type: "select",
-//                         order_by: "menu_order",
-//                         has_archives: true,
-//                         is_variation: attr.variation
-//                     }).then(async (response) => {
-//                         console.log(response)
-//                         needToUpdateTerms = true;
-//                         attributeId = existingAttribute.id; // Use the existing ID
-//                         await attributesCollection.updateOne({ _id: attr._id }, {
-//                             $set: {
-//                                 woo_id: attributeId,
-//                                 updatedAt: new Date().toISOString()
-//                             }
-//                         });
-//                         sendMessage(ws, `Attribute <strong>${attr.name}</strong> updated.`);
-//                     }).catch((err) => {
-//                         console.log(err.response.data.message);
-//                         sendMessage(ws, err.response.data.message)
-//                     });
-
-//                 } catch (err) {
-//                     console.error(`Error updating attribute '${attr.name}': ${err.message}`);
-//                     // sendMessage(ws, `Error updating attribute <strong>${attr.name}</strong>.`);
-//                     // needToUpdateTerms = true; // Skip updating terms if the attribute update fails
-//                 }
-//             } else {
-//                 // If attribute doesn't exist, create it
-//                 try {
-//                     await WooCommerceAPI.post("products/attributes", {
-//                         name: attr.name,
-//                         slug: attr.name.toLowerCase().replace(/\s+/g, '-'),
-//                         type: "select",
-//                         order_by: "menu_order",
-//                         has_archives: true,
-//                         is_variation: attr.variation
-//                     }).then(async (response) => {
-//                         console.log(response)
-//                         attributeId = response.data.id
-//                         needToUpdateTerms = true;
-//                         await attributesCollection.updateOne({ _id: attr._id }, {
-//                             $set: {
-//                                 woo_id: attributeId,
-//                                 updatedAt: new Date().toISOString()
-//                             }
-//                         });
-//                         sendMessage(ws, `Attribute <strong>${attr.name}</strong> created.`);
-//                     }).catch((err) => {
-//                         console.log(err.response.data);
-//                         attributeId = attr.woo_id;
-//                         sendMessage(ws, `Error creating attribute <strong>${attr.name}</strong> ---already exists`);
-//                         needToUpdateTerms = false; // Skip updating terms if the attribute creation fails
-//                     });
-//                 } catch (createErr) {
-//                     console.error(`Error creating attribute '${attr.name}': ${createErr.message}`);
-
-//                 }
-//             }
-
-//             console.log('ATT ID: ', attributeId)
-//             console.log("Update: ", needToUpdateTerms)
-
-//             if (attributeId && needToUpdateTerms === true) {
-//                 // Update terms only if we have a valid attribute ID and attribute creation/update didn't fail
-//                 const existingTerms = await fetchAllFromWooCommerce(`products/attributes/${attributeId}/terms`);
-
-//                 console.table(existingTerms)
-
-//                 for (const term of attr.values) {
-
-//                     console.log(attr)
-
-//                     const existingTerm = existingTerms.find(t => t.slug === term.toLowerCase());
-
-//                     if (existingTerm) {
-//                         // If term exists, update it
-//                         await WooCommerceAPI.put(`products/attributes/${attributeId}/terms/${existingTerm.id}`, {
-//                             name: term,
-//                             slug: `pa_${term.toLowerCase()}`
-//                         }).then(async (response) => {
-//                             console.log(response)
-//                         }).catch((err) => {
-//                             console.log(err.response.data.message);
-//                         });
-//                         sendMessage(ws, `-- Term <strong>${term}</strong> under attribute <strong>${attr.name}</strong> updated.`);
-//                     } else {
-//                         // If term doesn't exist, create it
-//                         await WooCommerceAPI.post(`products/attributes/${attributeId}/terms`, {
-//                             name: term,
-//                             slug: `pa_${term.toLowerCase()}`
-//                         }).then(async (response) => {
-//                             console.log(response)
-//                         }).catch((err) => {
-//                             console.log(err.response.data.message);
-//                         });
-//                         sendMessage(ws, `-- Term <strong>${term}</strong> under attribute <strong>${attr.name}</strong> created.`);
-//                     }
-//                 }
-//             }
-//         }
-//     } catch (err) {
-//         console.error(`Error in addOrUpdateGlobalAttributes: ${err.message}`);
-//         console.error(err)
-//         sendMessage(ws, 'An error occurred while updating global attributes.');
-//     } finally {
-//         await mongoose.connection.close();
-//     }
-// }
-
-
-
-
-
+// Map Products for WooCommerce
 async function mapProductsForWooCommerce(ws) {
     let finalMappedProducts = [];
 
@@ -1571,7 +876,96 @@ function modifyMappedProductsWithMedia(mappedProducts, media) {
 
 
 
-// :: HELPER FUNCTIONS::
+// :: START HELPER FUNCTIONS::
+
+// Websocket Sender function (USED AND WORKS)
+function sendMessage(ws, message) {
+    if (ws && ws.readyState === ws.OPEN) {
+        ws.send(message);
+    }
+}
+
+// Sleeper function (USED AND WORKS)
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Helper function to check to see if Attribute or Term Exists.
+async function checkToSeeIfAttributeAndTermExists() {
+    await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+    const attributesCollection = mongoose.connection.collection('product_attributes');
+    const allAttributes = await attributesCollection.find({}).toArray();
+    const existingAttributes = await fetchAllFromWooCommerce("products/attributes");
+
+    const existingAttributesMap = existingAttributes.reduce((map, attr) => {
+        const slugWithoutPrefix = attr.slug; //.replace(/^pa_/, '').toLowerCase()
+        map[slugWithoutPrefix] = attr;
+        return map;
+    }, {});
+
+    // Array to store the comparison results
+    const comparisonResults = [];
+
+    for (const attr of allAttributes) {
+        const attrSlug = attr.slug.toLowerCase();
+        let attributeResult = {
+            status: false,
+            name: attr.name,
+            woocommerceId: null,
+            dbId: attr._id,
+            slug: attrSlug,
+            terms: []
+        };
+
+        if (existingAttributesMap[attrSlug]) {
+            attributeResult.status = true;
+            attributeResult.woocommerceId = existingAttributesMap[attrSlug].id;
+
+            // Fetch terms for this attribute from WooCommerce
+            const existingTerms = await fetchAllFromWooCommerce(`products/attributes/${existingAttributesMap[attrSlug].id}/terms`);
+            const existingTermsMap = existingTerms.reduce((map, term) => {
+                map[term.name.toLowerCase()] = term;
+                return map;
+            }, {});
+
+            for (const term of attr.values) {
+                if (existingTermsMap[term.toLowerCase()]) {
+                    attributeResult.terms.push({
+                        exists: true,
+                        term_item: {
+                            name: term,
+                            id: existingTermsMap[term.toLowerCase()].id
+                        }
+                    });
+                } else {
+                    attributeResult.terms.push({
+                        exists: false,
+                        term_item: {
+                            name: term,
+                            id: null
+                        }
+                    });
+                }
+            }
+        } else {
+            // If attribute does not exist in WooCommerce, add all MongoDB terms as non-existing
+            for (const term of attr.values) {
+                attributeResult.terms.push({
+                    exists: false,
+                    term_item: {
+                        name: term,
+                        id: null
+                    }
+                });
+            }
+        }
+        comparisonResults.push(attributeResult);
+    }
+
+
+    // console.log(comparisonResults)
+    return comparisonResults;
+}
 
 // Seperate Variables and Variations
 function separateProductsAndVariations(mappedProducts) {
@@ -1744,7 +1138,7 @@ function areImagesEqual(newImage, currentImage) {
     return JSON.stringify(newImage) === JSON.stringify(currentImage);
 }
 
-// :: HELPER FUNCTIONS::
+// :: END HELPER FUNCTIONS::
 
 
 // :: DATA PREPORATION ::
@@ -1902,7 +1296,7 @@ async function uploadParentProducts(ws, variableProducts) {
     sendMessage(ws, `---Processed a batch of <strong>${createLength}</strong> parent product creations and <strong>${updateLength}</strong> parent product updates---`);
     return { wooParentIds: allIds, wooParentSkus: allSkus };
 }
-// ::WIP - Works and pushes data. A bit slow though.
+// ::PUSH VARIATIONS UP TO WOOCOMMERCE (COULD DO WITH OPTIMISING).
 async function uploadVariations(ws, variations, wooParentSkus, wooParentIds) {
     const WooCommerceAPI = new WooCommerceRestApi({
         url: process.env.WP_DESTINATION_URL,
@@ -2103,6 +1497,8 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
 
 
 // Let the Process Start
+
+
 async function processBuilder(ws) {
     const startTime = Date.now();
     ws.send("startTimer");
@@ -2125,13 +1521,13 @@ async function processBuilder(ws) {
         sendMessage(ws, "<strong>====ADDING GLOBAL ATTRIBUTES TO WOOCOMMERCE====</strong>")
         await addOrUpdateGlobalAttributes(ws)
 
-        // await sleep(delayTimeout);
-        // sendMessage(ws, "<STRONG>====MAPPING PRODUCTS FOR WOOCOMMERCE====</STRONG>");
-        // const mappedProducts = await mapProductsForWooCommerce(ws);
-        // // console.log(mappedProducts)
-        // await sleep(delayTimeout)
-        // sendMessage(ws, "<STRONG>====PUSHING PRODUCTS TO WOOCOMMERCE====</STRONG>");
-        // await pushProductsToWooCommerce(ws, mappedProducts);
+        await sleep(delayTimeout);
+        sendMessage(ws, "<STRONG>====MAPPING PRODUCTS FOR WOOCOMMERCE====</STRONG>");
+        const mappedProducts = await mapProductsForWooCommerce(ws);
+        // console.log(mappedProducts)
+        await sleep(delayTimeout)
+        sendMessage(ws, "<STRONG>====PUSHING PRODUCTS TO WOOCOMMERCE====</STRONG>");
+        await pushProductsToWooCommerce(ws, mappedProducts);
 
         sendMessage(ws, "<strong>====PROCESS COMPLETE====</strong>")
     } catch (err) {
