@@ -1086,8 +1086,6 @@ function modifyMappedProductsWithMedia(mappedProducts, media) {
 }
 
 
-
-
 // :: START HELPER FUNCTIONS::
 
 // Websocket Sender function (USED AND WORKS)
