@@ -1053,7 +1053,12 @@ async function saveCategoriesToWooCommerce() {
 
 async function fetchMediaFromWooCommerce() {
     const mediaResponse = await fetch(`${process.env.WP_DESTINATION_URL}/wp-json/wp/v2/media`);
-    return await mediaResponse.json();
+
+    const media = await mediaResponse.json();
+
+    // console.log(media)
+    return media;
+
 }
 
 function getImageId(imageUrl, media) {
@@ -1070,6 +1075,9 @@ function getVariationImageId(imageName, media) {
 
 function modifyMappedProductsWithMedia(mappedProducts, media) {
     mappedProducts.forEach(product => {
+
+        // console.log(product)
+
         if (product.images && product.images.length > 0) {
             product.images.forEach(image => {
                 if (image.src) {
@@ -1082,6 +1090,7 @@ function modifyMappedProductsWithMedia(mappedProducts, media) {
             });
         }
     });
+    // console.log(mappedProducts)
     return mappedProducts;
 }
 
@@ -1328,7 +1337,7 @@ function isProductDataChanged(newData, currentData) {
     if (newData.width !== currentData.width) return true;
     if (newData.length !== currentData.length) return true;
     if (newData.description !== currentData.description) return true;
-    if (!areImagesEqual(newData.image, currentData.image)) return true;
+    // if (!areImagesEqual(newData.image, currentData.image)) return true;
 
     return false;
 }
@@ -1342,11 +1351,11 @@ function areDownloadsEqual(newDownloads, currentDownloads) {
     // Compare the downloads arrays
     return JSON.stringify(newDownloads) === JSON.stringify(currentDownloads);
 }
-function areImagesEqual(newImage, currentImage) {
-    // Compare the image objects
-    // This assumes images are compared based on an ID or src attribute
-    return JSON.stringify(newImage) === JSON.stringify(currentImage);
-}
+// function areImagesEqual(newImage, currentImage) {
+//     // Compare the image objects
+//     // This assumes images are compared based on an ID or src attribute
+//     return JSON.stringify(newImage) === JSON.stringify(currentImage);
+// }
 // :: END HELPER FUNCTIONS::
 
 
@@ -1407,13 +1416,13 @@ function prepareVariationData(variationProducts, parentId) {
 // :: MAIN FUNCTION for Parent Product integration
 // Upload the Parent Products
 async function uploadParentProducts(ws, variableProducts) {
-    const WooCommerceAPI = new WooCommerceRestApi({
-        url: process.env.WP_DESTINATION_URL,
-        consumerKey: process.env.WC_CONSUMER_KEY,
-        consumerSecret: process.env.WC_CONSUMER_SECRET,
-        version: process.env.WC_API_VERSION,
-        queryStringAuth: true,
-    });
+    // const WooCommerceAPI = new WooCommerceRestApi({
+    //     url: process.env.WP_DESTINATION_URL,
+    //     consumerKey: process.env.WC_CONSUMER_KEY,
+    //     consumerSecret: process.env.WC_CONSUMER_SECRET,
+    //     version: process.env.WC_API_VERSION,
+    //     queryStringAuth: true,
+    // });
 
     const parentProductsData = prepareParentProductData(variableProducts);
     let productDataPush = {
@@ -1622,7 +1631,13 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
     try {
         const media = await fetchMediaFromWooCommerce();
         const mProducts = modifyMappedProductsWithMedia(mappedProducts, media);
+        // console.log(mProducts);
+
         const { variableProducts, variations } = separateProductsAndVariations(mProducts);
+
+
+        // console.log('variations')
+        // console.log(variations);
 
         sendMessage(ws, '== Process Variables on website ==')
         const { wooParentIds, wooParentSkus } = await uploadParentProducts(ws, variableProducts);
