@@ -1074,21 +1074,53 @@ function getVariationImageId(imageName, media) {
 }
 
 function modifyMappedProductsWithMedia(mappedProducts, media) {
-    mappedProducts.forEach(product => {
+    mappedProducts.forEach(product => async () => {
+
+        const data = {
+            "id": product.id,
+            "image_url": media['featured_img_url'],
+            "image_alt": media['featured_img_alt'],
+            "gallery_images_url": media.galleryImages.map(galImg => ({
+                alt: galImg.alt,
+                url: galImg.url
+            })),
+        }
+        try {
+            await WooCommerceAPI.post("/wp-json/sd-image-push-api/v1/push-image/", data)
+                .then(async (response) => {
+                    if (response.data.create && response.data.create.length > 0) {
+                        for (const product of response.data.create) {
+                            await MappedProduct.findOneAndUpdate({ sku: product.sku }, { $set: { woo_id: response.data.create.id } }, { upsert: true });
+                        }
+                    }
+                    if (response.data.update && response.data.update.length > 0) {
+                        for (const product of response.data.update) {
+                            await MappedProduct.findOneAndUpdate({ sku: product.sku }, { $set: { woo_id: response.data.update.id } }, { upsert: true });
+                        }
+                    }
+                })
+                .catch((err) => {
+                    console.log(err.message);
+                });
+        } catch (err) {
+            console.log('Error occured,', err)
+        }
+
+
 
         // console.log(product)
 
-        if (product.images && product.images.length > 0) {
-            product.images.forEach(image => {
-                if (image.src) {
-                    const existingImageId = getImageId(image.src, media);
-                    if (existingImageId) {
-                        image.id = existingImageId;
-                        delete image.src;
-                    }
-                }
-            });
-        }
+        // if (product.images && product.images.length > 0) {
+        //     product.images.forEach(image => {
+        //         if (image.src) {
+        //             const existingImageId = getImageId(image.src, media);
+        //             if (existingImageId) {
+        //                 image.id = existingImageId;
+        //                 delete image.src;
+        //             }
+        //         }
+        //     });
+        // }
     });
     // console.log(mappedProducts)
     return mappedProducts;
@@ -1625,6 +1657,7 @@ async function uploadVariations(ws, variations, wooParentSkus, wooParentIds) {
 
     return { wooVariationIds: allVariationIds, wooVariationSkus: allVariationSkus };
 }
+
 
 // WooCommerce Process function
 async function pushProductsToWooCommerce(ws, mappedProducts) {
