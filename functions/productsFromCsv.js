@@ -649,7 +649,11 @@ const mappedProductSchema = new mongoose.Schema({
     attributes: Array,
     downloadable: Boolean,
     downloads: Array,
-    images: Array,
+    // :: WIP
+    images: {
+        'featured': String,
+        'gallery': Array,
+    },
     categories: Array,
     tags: Array,
     meta_data: Array,
@@ -1073,7 +1077,13 @@ function getVariationImageId(imageName, media) {
     return existingMedia ? existingMedia.id : null;
 }
 
+// :: WIP
 function modifyMappedProductsWithMedia(mappedProducts, media) {
+    console.log(mappedProducts)
+
+    console.log(media)
+    return
+
     mappedProducts.forEach(product => async () => {
 
         const data = {
@@ -1088,14 +1098,19 @@ function modifyMappedProductsWithMedia(mappedProducts, media) {
         try {
             await WooCommerceAPI.post("/wp-json/sd-image-push-api/v1/push-image/", data)
                 .then(async (response) => {
-                    if (response.data.create && response.data.create.length > 0) {
-                        for (const product of response.data.create) {
-                            await MappedProduct.findOneAndUpdate({ sku: product.sku }, { $set: { woo_id: response.data.create.id } }, { upsert: true });
+
+                    console.log(response);
+
+                    return;
+                    if (response.data && response.data.length > 0) {
+
+                        const resultData = {
+                            featured: response.data.featured,
+                            gallery: response.data.gallery
                         }
-                    }
-                    if (response.data.update && response.data.update.length > 0) {
-                        for (const product of response.data.update) {
-                            await MappedProduct.findOneAndUpdate({ sku: product.sku }, { $set: { woo_id: response.data.update.id } }, { upsert: true });
+
+                        for (const product of response.data) {
+                            await MappedProduct.findOneAndUpdate({ sku: product.sku }, { $set: { images: resultData } }, { upsert: true });
                         }
                     }
                 })
