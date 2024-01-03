@@ -237,7 +237,7 @@ const TempProduct = mongoose.model('TempProduct', tempProductSchema, 'csvProduct
 
 // Function to convert CSV to MongoDB (USED AND WORKS)
 async function convertCSVToMongo(ws) {
-    const csvFilePath = './csv_data/tubular-data.csv';
+    const csvFilePath = './csv_data/tubular-data-actual.csv';
     try {
         await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
 
@@ -482,7 +482,7 @@ async function addOrUpdateGlobalAttributes(ws) {
                                 name: term.term_item.name,
                                 slug: term.term_item.name.toLowerCase().replace(/\s+/g, '-')
                             }).then(async (response) => {
-                                console.log(response);
+                                // console.log(response);
                                 // sendMessage(ws, `Term <strong>${term.term_item.name}</strong> created`)
                                 sendMessage(ws, `-- Term <strong>${term.term_item.name}</strong> created under attribute <strong>${attribute.name}</strong>.`);
                             }).catch((err) => {
@@ -516,7 +516,7 @@ async function addOrUpdateGlobalAttributes(ws) {
                             name: term.term_item.name,
                             // slug: term.term_item.name.toLowerCase().replace(/\s+/g, '-')
                         }).then(async (response) => {
-                            console.log(response);
+                            // console.log(response);
                             // sendMessage(ws, `Term <strong>${term.name}</strong> created`)
                             sendMessage(ws, `-- Term <strong>${term.term_item.name}</strong> created under attribute <strong>${attribute.name}</strong>.`);
                         }).catch((err) => {
@@ -1047,7 +1047,7 @@ async function saveCategoriesToWooCommerce() {
         });
     }
 
-    mongoose.connection.close();
+    // mongoose.connection.close();
 }
 
 
@@ -1069,6 +1069,7 @@ function getImageId(imageUrl, media) {
 }
 
 function getVariationImageId(imageName, media) {
+    if (!imageName) return null;
     const existingMedia = media.find(m => m.title.rendered === imageName);
     return existingMedia ? existingMedia.id : null;
 }
@@ -1284,7 +1285,6 @@ async function checkToSeeIfWOOIDinDB(wooId, sku) {
                 { new: true, upsert: true }
             );
 
-            // console.log(res)
 
             return {
                 existsInDB: 'updated',
@@ -1362,9 +1362,6 @@ function areDownloadsEqual(newDownloads, currentDownloads) {
 // :: DATA PREPORATION ::
 // Prepares the Variable Product Data into the pushProductsToWooCommerce structure (Note, Might need further refactoring to use Schema)
 function prepareParentProductData(variableProducts) {
-
-    // console.log(variableProducts)
-
     return variableProducts.map(product => ({
         name: product.name,
         slug: product.slug,
@@ -1408,7 +1405,7 @@ function prepareVariationData(variationProducts, parentId) {
         width: product.width,
         length: product.length,
         description: product.description,
-        image: product.image_id ? { id: product.image_id } : null,
+        // image: product.images[0],
         woo_id: product.woo_id
     }));
 }
@@ -1416,14 +1413,6 @@ function prepareVariationData(variationProducts, parentId) {
 // :: MAIN FUNCTION for Parent Product integration
 // Upload the Parent Products
 async function uploadParentProducts(ws, variableProducts) {
-    // const WooCommerceAPI = new WooCommerceRestApi({
-    //     url: process.env.WP_DESTINATION_URL,
-    //     consumerKey: process.env.WC_CONSUMER_KEY,
-    //     consumerSecret: process.env.WC_CONSUMER_SECRET,
-    //     version: process.env.WC_API_VERSION,
-    //     queryStringAuth: true,
-    // });
-
     const parentProductsData = prepareParentProductData(variableProducts);
     let productDataPush = {
         create: [],
@@ -1515,13 +1504,6 @@ async function uploadParentProducts(ws, variableProducts) {
 }
 // ::PUSH VARIATIONS UP TO WOOCOMMERCE (COULD DO WITH OPTIMISING).
 async function uploadVariations(ws, variations, wooParentSkus, wooParentIds) {
-    const WooCommerceAPI = new WooCommerceRestApi({
-        url: process.env.WP_DESTINATION_URL,
-        consumerKey: process.env.WC_CONSUMER_KEY,
-        consumerSecret: process.env.WC_CONSUMER_SECRET,
-        version: process.env.WC_API_VERSION,
-        queryStringAuth: true,
-    });
 
     let productDataPush = {
         create: [],
@@ -1631,13 +1613,7 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
     try {
         const media = await fetchMediaFromWooCommerce();
         const mProducts = modifyMappedProductsWithMedia(mappedProducts, media);
-        // console.log(mProducts);
-
         const { variableProducts, variations } = separateProductsAndVariations(mProducts);
-
-
-        // console.log('variations')
-        // console.log(variations);
 
         sendMessage(ws, '== Process Variables on website ==')
         const { wooParentIds, wooParentSkus } = await uploadParentProducts(ws, variableProducts);
@@ -1645,8 +1621,13 @@ async function pushProductsToWooCommerce(ws, mappedProducts) {
         sendMessage(ws, '== Process Variations on website ==')
         const { wooVariationSkus } = await uploadVariations(ws, variations, wooParentSkus, wooParentIds);
 
+
+        // const pushMedia = pushedMedia(mProducts);
+        // console.log(pushMedia)
+
         const parentProductsLength = wooParentSkus.length;
         const variationProductsLength = wooVariationSkus.length;
+
         sendMessage(ws, `<strong>!!!!!Successfully pushed ${parentProductsLength} Parent Products and their ${variationProductsLength} variations to WooCommerce!!!!</strong>`);
     } catch (error) {
         console.error("Error pushing products to WooCommerce:", error);
